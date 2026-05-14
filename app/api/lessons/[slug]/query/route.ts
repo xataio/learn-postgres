@@ -5,6 +5,10 @@ import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
 import { userBranch } from "@/db/schema";
 import { runQuery } from "@/lib/shell/query-runner";
+import { checkRate } from "@/lib/rate-limit";
+
+const QUERY_RATE_LIMIT = Number(process.env.QUERY_RATE_LIMIT ?? 30);
+const QUERY_RATE_WINDOW_MS = Number(process.env.QUERY_RATE_WINDOW_MS ?? 10_000);
 
 type Ctx = { params: Promise<{ slug: string }> };
 
@@ -12,6 +16,24 @@ export async function POST(req: Request, ctx: Ctx) {
   const session = await auth.api.getSession({ headers: await headers() });
   if (!session) {
     return NextResponse.json({ error: "Not authenticated" }, { status: 401 });
+  }
+
+  const rate = checkRate(
+    `query:${session.user.id}`,
+    QUERY_RATE_LIMIT,
+    QUERY_RATE_WINDOW_MS,
+  );
+  if (!rate.allowed) {
+    return NextResponse.json(
+      {
+        ok: false,
+        error: `Too many queries. Slow down and retry in ${rate.retryAfterSeconds}s.`,
+      },
+      {
+        status: 429,
+        headers: { "Retry-After": String(rate.retryAfterSeconds) },
+      },
+    );
   }
 
   const { slug } = await ctx.params;

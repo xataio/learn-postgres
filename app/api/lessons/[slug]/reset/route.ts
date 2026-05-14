@@ -3,6 +3,7 @@ import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
 import { getLesson } from "@/lib/lessons";
 import { resetBranchForLesson } from "@/lib/branch-manager";
+import { RateLimitError } from "@/lib/rate-limit";
 
 type Ctx = { params: Promise<{ slug: string }> };
 
@@ -25,6 +26,15 @@ export async function POST(_req: Request, ctx: Ctx) {
       branch: { id: row.xataBranchId, name: row.xataBranchName },
     });
   } catch (err) {
+    if (err instanceof RateLimitError) {
+      return NextResponse.json(
+        { error: err.message },
+        {
+          status: 429,
+          headers: { "Retry-After": String(err.retryAfterSeconds) },
+        },
+      );
+    }
     return NextResponse.json(
       { error: (err as Error).message },
       { status: 500 },

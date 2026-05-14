@@ -1,6 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, eq, lt } from "drizzle-orm";
+import { and, asc, eq, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { userBranch } from "@/db/schema";
 import type { Lesson } from "@/lib/lessons";
@@ -16,10 +16,73 @@ import {
   rotateCredentials,
 } from "@/lib/xata";
 import { acquireClient, dropPool } from "@/lib/shell/pool-cache";
+import { enforceRate } from "@/lib/rate-limit";
 
 export type UserBranchRow = typeof userBranch.$inferSelect;
 
 const XATA_NAME_MAX = 63;
+const DEFAULT_MAX_BRANCHES_PER_USER = 5;
+const DEFAULT_BRANCH_CREATE_LIMIT = 5;
+const DEFAULT_BRANCH_CREATE_WINDOW_MS = 60_000;
+
+function branchCreateLimit(): { limit: number; windowMs: number } {
+  const limitRaw = process.env.BRANCH_CREATE_LIMIT;
+  const windowRaw = process.env.BRANCH_CREATE_WINDOW_MS;
+  const limit = limitRaw ? Number(limitRaw) : NaN;
+  const windowMs = windowRaw ? Number(windowRaw) : NaN;
+  return {
+    limit:
+      Number.isFinite(limit) && limit >= 1
+        ? Math.floor(limit)
+        : DEFAULT_BRANCH_CREATE_LIMIT,
+    windowMs:
+      Number.isFinite(windowMs) && windowMs >= 1000
+        ? Math.floor(windowMs)
+        : DEFAULT_BRANCH_CREATE_WINDOW_MS,
+  };
+}
+
+function maxBranchesPerUser(): number {
+  const raw = process.env.MAX_BRANCHES_PER_USER;
+  const parsed = raw ? Number(raw) : NaN;
+  return Number.isFinite(parsed) && parsed >= 1
+    ? Math.floor(parsed)
+    : DEFAULT_MAX_BRANCHES_PER_USER;
+}
+
+/**
+ * Enforce a per-user cap on active sandbox branches. Called just before
+ * creating a new one — evicts the least-recently-used until there's room.
+ */
+async function enforceBranchQuota(userId: string): Promise<void> {
+  const cap = maxBranchesPerUser();
+  const rows = await db
+    .select()
+    .from(userBranch)
+    .where(eq(userBranch.userId, userId))
+    .orderBy(asc(userBranch.lastUsedAt));
+
+  // Need room for one more after the create that's about to run.
+  const overage = rows.length - (cap - 1);
+  if (overage <= 0) return;
+
+  const victims = rows.slice(0, overage);
+  for (const row of victims) {
+    console.log(
+      `[quota] user=${shortUserId(userId)} evicting ${row.xataBranchName} (lesson=${row.lessonSlug})`,
+    );
+    if (row.connectionString) await dropPool(row.connectionString).catch(() => {});
+    await deleteBranch(row.xataBranchId).catch(() => {});
+    await db
+      .delete(userBranch)
+      .where(
+        and(
+          eq(userBranch.userId, userId),
+          eq(userBranch.lessonSlug, row.lessonSlug),
+        ),
+      );
+  }
+}
 
 function shortUserId(userId: string): string {
   return createHash("sha256").update(userId).digest("hex").slice(0, 8);
@@ -246,6 +309,18 @@ export async function ensureBranchForLesson(
   }
 
   const tag = `[ensure-branch] user=${shortUserId(userId)} lesson=${lesson.meta.slug}`;
+
+  // We're about to spin up a fresh Xata branch. Cap how often any single user
+  // can do this — it's the expensive operation worth protecting.
+  const { limit, windowMs } = branchCreateLimit();
+  enforceRate(
+    `branch-create:${userId}`,
+    limit,
+    windowMs,
+    `Too many sandbox creations. Wait a moment and try again.`,
+  );
+
+  await enforceBranchQuota(userId);
 
   const parentId = await getParentBranchId();
   const name = buildBranchName(userId, lesson.meta.slug);
