@@ -11,4 +11,10 @@ tags:
 authors:
   - exekias
 seed: seed.sql
-checks: []
+checks:
+  - id: seed-loaded
+    type: row-count
+    description: The seeded users table has 10 rows — click to mark this lesson done.
+    table: users
+    expect:
+      rowCount: 10
