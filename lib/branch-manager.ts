@@ -16,6 +16,7 @@ import {
   readCredentialsFromDsn,
   rotateCredentials,
 } from "@/lib/xata";
+import { dropPool } from "@/lib/shell/pool-cache";
 
 export type UserBranchRow = typeof userBranch.$inferSelect;
 
@@ -347,6 +348,7 @@ export async function dropBranchForLesson(
   const row = await findExisting(userId, lessonSlug);
   if (!row) return;
 
+  if (row.connectionString) await dropPool(row.connectionString);
   await deleteBranch(row.xataBranchId).catch(() => {});
   await db
     .delete(userBranch)
@@ -395,6 +397,7 @@ export async function cleanupIdleBranches(
 
   for (const row of idle) {
     try {
+      if (row.connectionString) await dropPool(row.connectionString);
       await deleteBranch(row.xataBranchId);
       await db
         .delete(userBranch)

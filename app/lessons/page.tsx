@@ -22,7 +22,7 @@ export default async function LessonsCatalogPage() {
       </h1>
       <p className="mt-2 text-sm text-zinc-500">
         Short, hands-on Postgres exercises. Sign in to run them in your own
-        sandbox; previews are public.
+        sandbox.
       </p>
 
       {lessons.length === 0 ? (
@@ -74,12 +74,6 @@ export default async function LessonsCatalogPage() {
                     </span>
                   </>
                 )}
-                <Link
-                  href={`/lessons/${lesson.meta.slug}/preview`}
-                  className="ml-auto underline underline-offset-2 hover:text-zinc-700 dark:hover:text-zinc-300"
-                >
-                  preview
-                </Link>
               </div>
             </li>
           ))}

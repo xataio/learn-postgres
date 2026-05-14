@@ -1,17 +1,27 @@
 import "server-only";
-import { Client, type QueryArrayResult } from "pg";
-import type { QueryResult, ResultBlock } from "./types";
+import type { QueryArrayResult } from "pg";
 
-export type { QueryResult, ResultBlock, FieldInfo, QueryOk, QueryErr } from "./types";
+type PgNotice = { severity?: string; message?: string };
+import type { QueryResult, ResultBlock } from "./types";
+import { acquireClient } from "./pool-cache";
+
+export type {
+  QueryResult,
+  ResultBlock,
+  FieldInfo,
+  QueryOk,
+  QueryErr,
+} from "./types";
 
 export const MAX_ROWS = 1000;
-const STATEMENT_TIMEOUT_MS = 5_000;
 const DEFAULT_CONNECT_TIMEOUT_MS = 30_000;
 
 function connectTimeoutMs(): number {
   const raw = process.env.BRANCH_CONNECT_TIMEOUT_MS;
   const parsed = raw ? Number(raw) : NaN;
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CONNECT_TIMEOUT_MS;
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_CONNECT_TIMEOUT_MS;
 }
 
 type ConnectErrorDetails = Error & {
@@ -46,56 +56,8 @@ function describeConnectError(err: unknown): string {
 }
 
 function hostFromDsn(dsn: string): string {
-  // Use a regex rather than `new URL()` — pg's connection-string parser is
-  // looser about special characters in passwords, so URL parsing can fail on
-  // DSNs that pg accepts. postgres[ql]://[user[:pw]@]host[:port]/...
   const m = dsn.match(/^(?:postgres(?:ql)?:\/\/)?(?:[^@/]*@)?([^/?:\s]+)/);
   return m?.[1] ?? "<unparseable>";
-}
-
-/**
- * Open a Postgres connection, transparently retrying through Xata's
- * scale-to-zero cold start. A pg.Client can only be connected once, so we
- * create a fresh one for every attempt.
- */
-async function createAndConnect(dsn: string): Promise<Client> {
-  const timeoutMs = connectTimeoutMs();
-  const deadline = Date.now() + timeoutMs;
-  const host = hostFromDsn(dsn);
-  let attempt = 0;
-  let lastError: unknown;
-
-  while (Date.now() < deadline) {
-    attempt++;
-    const client = new Client({
-      connectionString: dsn,
-      ssl: { rejectUnauthorized: false },
-    });
-    try {
-      await client.connect();
-      if (attempt > 1) {
-        console.log(
-          `[branch-connect] ${host} ready after ${attempt} attempt(s)`,
-        );
-      }
-      return client;
-    } catch (err) {
-      lastError = err;
-      console.error(
-        `[branch-connect] ${host} attempt ${attempt} failed: ${describeConnectError(err)}`,
-      );
-      await client.end().catch(() => {});
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      const wait = Math.min(250 * attempt, 1500, remaining);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-
-  const detail = describeConnectError(lastError);
-  const message = `gave up after ${attempt} attempt(s) in ${timeoutMs}ms — ${detail}`;
-  console.error(`[branch-connect] ${host} ${message}`);
-  throw new Error(message);
 }
 
 function serializeRow(row: unknown[]): unknown[] {
@@ -145,26 +107,30 @@ export async function runQuery(
     return { ok: true, results: [], notices: [], durationMs: 0 };
   }
 
-  let client: Client;
+  const host = hostFromDsn(dsn);
+  const acquireStart = Date.now();
+  let client;
   try {
-    client = await createAndConnect(dsn);
+    client = await acquireClient(dsn, connectTimeoutMs());
   } catch (err) {
-    return {
-      ok: false,
-      error: `Could not connect to branch: ${(err as Error).message}`,
-    };
+    const detail = describeConnectError(err);
+    console.error(`[branch-connect] ${host} acquire failed: ${detail}`);
+    return { ok: false, error: `Could not connect to branch: ${detail}` };
+  }
+  const waitedMs = Date.now() - acquireStart;
+  if (waitedMs > 1000) {
+    console.log(`[branch-connect] ${host} acquired after ${waitedMs}ms`);
   }
 
   const notices: string[] = [];
-  client.on("notice", (n) => {
+  const onNotice = (n: PgNotice) => {
     const parts = [n.severity, n.message].filter(Boolean);
     notices.push(parts.join(": "));
-  });
+  };
+  client.on("notice", onNotice);
 
   const start = performance.now();
   try {
-    await client.query(`SET statement_timeout TO ${STATEMENT_TIMEOUT_MS}`);
-
     const result = (await client.query({
       text: trimmed,
       rowMode: "array",
@@ -186,9 +152,7 @@ export async function runQuery(
       position?: string;
     };
     const codePart = e.code ? ` [${e.code}]` : "";
-    console.error(
-      `[query]${codePart} ${e.message ?? String(err)}`,
-    );
+    console.error(`[query]${codePart} ${e.message ?? String(err)}`);
     return {
       ok: false,
       error: e.message ?? String(err),
@@ -199,6 +163,7 @@ export async function runQuery(
       position: e.position ? Number(e.position) : undefined,
     };
   } finally {
-    await client.end().catch(() => {});
+    client.off("notice", onNotice);
+    client.release();
   }
 }

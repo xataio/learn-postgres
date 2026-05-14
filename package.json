@@ -15,6 +15,7 @@
     "new-lesson": "tsx scripts/new-lesson.ts"
   },
   "dependencies": {
+    "@neondatabase/serverless": "^1.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
     "better-auth": "^1.6.11",
@@ -26,6 +27,7 @@
     "react": "19.2.4",
     "react-dom": "19.2.4",
     "server-only": "^0.0.1",
+    "ws": "^8.20.1",
     "zod": "^4.4.3"
   },
   "devDependencies": {
@@ -36,6 +38,7 @@
     "@types/pg": "^8.20.0",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@types/ws": "^8.18.1",
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9",

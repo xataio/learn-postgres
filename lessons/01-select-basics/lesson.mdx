@@ -10,10 +10,6 @@ SELECT * FROM users;
 
 You'll see ten rows, all five columns. The `*` is a wildcard for "every column."
 
-<Check id="seed-loaded">
-Run a `SELECT count(*) FROM users` and you should see **10**. That confirms your sandbox has the right seed loaded.
-</Check>
-
 ## Pick the columns you want
 
 `*` is convenient but wasteful — and in real queries you almost always know exactly which columns you need. Name them.
@@ -35,10 +31,6 @@ WHERE is_active = true;
 </Run>
 
 There are seven active users in the seed. Try flipping the predicate to `is_active = false` to see the three who aren't.
-
-<Check id="has-is-active-column">
-The `users` table has an `is_active` column of type `boolean`. You can verify this with `\d users` once the interactive shell lands.
-</Check>
 
 ## Sort with `ORDER BY`
 

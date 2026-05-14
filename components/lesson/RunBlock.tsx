@@ -2,20 +2,13 @@
 
 import { useRef, type ReactNode } from "react";
 
-type Props = {
-  children: ReactNode;
-  interactive?: boolean;
-};
-
-export function RunBlock({ children, interactive = false }: Props) {
+export function RunBlock({ children }: { children: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
 
   const onRun = () => {
     const sql = preRef.current?.textContent?.trim();
     if (!sql) return;
-    window.dispatchEvent(
-      new CustomEvent("learn:run", { detail: { sql } }),
-    );
+    window.dispatchEvent(new CustomEvent("learn:run", { detail: { sql } }));
   };
 
   return (
@@ -25,11 +18,8 @@ export function RunBlock({ children, interactive = false }: Props) {
         <button
           type="button"
           onClick={onRun}
-          disabled={!interactive}
-          className="rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/[.04]"
-          title={
-            interactive ? "Run in your shell" : "Available in the interactive lesson"
-          }
+          className="rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
+          title="Run in your shell"
         >
           ▶ Run
         </button>

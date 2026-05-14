@@ -3,24 +3,28 @@ import type { Lesson } from "@/lib/lessons";
 import { CheckCard } from "./Check";
 import { RunBlock } from "./RunBlock";
 
-type Mode = "preview" | "interactive";
+type BuildOpts = {
+  lesson: Lesson;
+  passedCheckIds: Set<string>;
+};
 
-export function buildLessonComponents(lesson: Lesson, mode: Mode) {
-  const interactive = mode === "interactive";
-
+export function buildLessonComponents({ lesson, passedCheckIds }: BuildOpts) {
   return {
     Check: ({ id, children }: { id: string; children?: ReactNode }) => {
       const check = lesson.meta.checks.find((c) => c.id === id);
       return (
-        <CheckCard check={check} interactive={interactive}>
+        <CheckCard
+          check={check}
+          lessonSlug={lesson.meta.slug}
+          initiallyPassed={passedCheckIds.has(id)}
+        >
           {children}
         </CheckCard>
       );
     },
     Run: ({ children }: { children: ReactNode }) => (
-      <RunBlock interactive={interactive}>{children}</RunBlock>
+      <RunBlock>{children}</RunBlock>
     ),
-    // Style fenced code blocks consistently. MDX renders ```sql as <pre><code class="language-sql">.
     pre: (props: ComponentProps<"pre">) => (
       <pre
         {...props}

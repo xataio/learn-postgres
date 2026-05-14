@@ -89,6 +89,11 @@ Checks are **optional**. Add them when you can verify an objective state of
 the learner's Postgres branch — not "did they type the right query," because
 queries are stateless and we can't observe them. Three types:
 
+> **For SELECT-only lessons, skip checks entirely.** Read-only queries don't
+> change state, so a state-based check on a SELECT lesson always passes the
+> moment the branch is provisioned — misleading UX. Add checks once your
+> lesson involves a DML or DDL exercise the learner is expected to perform.
+
 ### `query-returns` — run SQL, compare result
 
 ```yaml

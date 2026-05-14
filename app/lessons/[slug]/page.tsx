@@ -11,6 +11,7 @@ import {
 import { buildLessonComponents } from "@/components/lesson/mdx-components";
 import { BranchPanel } from "@/components/lesson/BranchPanel";
 import { SandboxPanel } from "@/components/lesson/SandboxPanel";
+import { getPassedCheckIds } from "@/lib/lesson-progress";
 
 type Params = { slug: string };
 
@@ -44,8 +45,13 @@ export default async function LessonPage({
   const lesson = await getLesson(slug);
   if (!lesson) notFound();
 
-  const branch = await getBranchState(session.user.id, lesson);
-  const components = buildLessonComponents(lesson, "interactive");
+  const [branch, passedCheckIds] = await Promise.all([
+    getBranchState(session.user.id, lesson),
+    getPassedCheckIds(session.user.id, slug),
+  ]);
+  const components = buildLessonComponents({ lesson, passedCheckIds });
+  const totalChecks = lesson.meta.checks.length;
+  const passedCount = passedCheckIds.size;
 
   return (
     <div className="px-6 py-6">
@@ -59,8 +65,21 @@ export default async function LessonPage({
         <h1 className="font-mono text-2xl font-semibold tracking-tight">
           {lesson.meta.title}
         </h1>
-        <div className="text-xs text-zinc-500">
-          {lesson.meta.difficulty} · {lesson.meta.estimatedMinutes} min
+        <div className="flex items-center gap-3 text-xs text-zinc-500">
+          <span>
+            {lesson.meta.difficulty} · {lesson.meta.estimatedMinutes} min
+          </span>
+          {totalChecks > 0 && (
+            <span
+              className={`rounded-full px-2 py-0.5 font-medium ${
+                passedCount === totalChecks
+                  ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                  : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+              }`}
+            >
+              {passedCount}/{totalChecks} checks
+            </span>
+          )}
         </div>
       </header>
 

@@ -11,17 +11,4 @@ tags:
 authors:
   - exekias
 seed: seed.sql
-checks:
-  - id: seed-loaded
-    type: query-returns
-    description: Confirm the seed loaded 10 users.
-    sql: SELECT count(*) FROM users
-    expect:
-      rowCount: 1
-      rows: [[10]]
-  - id: has-is-active-column
-    type: schema-state
-    description: The users table has an is_active boolean column.
-    table: users
-    column: is_active
-    columnType: boolean
+checks: []
