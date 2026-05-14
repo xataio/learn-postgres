@@ -1,7 +1,6 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { and, eq, lt } from "drizzle-orm";
-import { Client } from "pg";
 import { db } from "@/lib/db";
 import { userBranch } from "@/db/schema";
 import type { Lesson } from "@/lib/lessons";
@@ -16,7 +15,7 @@ import {
   readCredentialsFromDsn,
   rotateCredentials,
 } from "@/lib/xata";
-import { dropPool } from "@/lib/shell/pool-cache";
+import { acquireClient, dropPool } from "@/lib/shell/pool-cache";
 
 export type UserBranchRow = typeof userBranch.$inferSelect;
 
@@ -200,52 +199,18 @@ async function resolveBranchDsn(
   }
 }
 
-/**
- * Connect with a deadline. Xata sometimes hands you valid credentials a moment
- * before Postgres on the branch accepts them — we retry transient failures
- * (auth not yet propagated, port not open) but never SQL errors.
- */
-async function connectWithRetry(
-  dsn: string,
-  timeoutMs = 10_000,
-): Promise<Client> {
-  const deadline = Date.now() + timeoutMs;
-  let attempt = 0;
-  let lastError: unknown;
-
-  while (Date.now() < deadline) {
-    attempt++;
-    const client = new Client({
-      connectionString: dsn,
-      ssl: { rejectUnauthorized: false },
-    });
-    try {
-      await client.connect();
-      return client;
-    } catch (err) {
-      lastError = err;
-      await client.end().catch(() => {});
-      const remaining = deadline - Date.now();
-      if (remaining <= 0) break;
-      const wait = Math.min(250 * attempt, 1500, remaining);
-      await new Promise((r) => setTimeout(r, wait));
-    }
-  }
-
-  const message =
-    lastError instanceof Error ? lastError.message : String(lastError);
-  throw new Error(`Could not connect to branch within ${timeoutMs}ms: ${message}`);
-}
-
 async function runSeed(dsn: string, sql: string): Promise<void> {
   const trimmed = sql.trim();
   if (!trimmed) return;
 
-  const client = await connectWithRetry(dsn);
+  // Reuse the shared pool: same WS proxy, same retry budget (30s by default).
+  // The auth/credential propagation race after branch creation is what tends
+  // to bite — the pool's per-attempt logging makes those visible.
+  const client = await acquireClient(dsn);
   try {
     await client.query(trimmed);
   } finally {
-    await client.end();
+    client.release();
   }
 }
 
@@ -280,13 +245,22 @@ export async function ensureBranchForLesson(
     return existing;
   }
 
+  const tag = `[ensure-branch] user=${shortUserId(userId)} lesson=${lesson.meta.slug}`;
+
   const parentId = await getParentBranchId();
   const name = buildBranchName(userId, lesson.meta.slug);
-  const branch = await createBranchWith409Retry({
-    name,
-    parentId,
-    description: lesson.meta.slug.slice(0, 50),
-  });
+  let branch;
+  try {
+    branch = await createBranchWith409Retry({
+      name,
+      parentId,
+      description: lesson.meta.slug.slice(0, 50),
+    });
+  } catch (err) {
+    console.error(`${tag} create-branch failed: ${(err as Error).message}`);
+    throw err;
+  }
+  console.log(`${tag} created branch ${branch.id} (${branch.name})`);
 
   let connectionString: string;
   try {
@@ -295,6 +269,9 @@ export async function ensureBranchForLesson(
       branch.connectionString,
     );
   } catch (err) {
+    console.error(
+      `${tag} await-connection-string failed for ${branch.id}: ${(err as Error).message}`,
+    );
     await deleteBranch(branch.id).catch(() => {});
     throw err;
   }
@@ -303,6 +280,9 @@ export async function ensureBranchForLesson(
   try {
     dsn = await resolveBranchDsn(branch.id, connectionString);
   } catch (err) {
+    console.error(
+      `${tag} resolve-dsn failed for ${branch.id}: ${(err as Error).message}`,
+    );
     await deleteBranch(branch.id).catch(() => {});
     throw err;
   }
@@ -310,6 +290,9 @@ export async function ensureBranchForLesson(
   try {
     await runSeed(dsn, lesson.seedSql);
   } catch (err) {
+    console.error(
+      `${tag} seed failed for ${branch.id}: ${(err as Error).message}`,
+    );
     await deleteBranch(branch.id).catch(() => {});
     throw new Error(
       `Seed for ${lesson.meta.slug} failed: ${(err as Error).message}`,

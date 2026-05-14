@@ -1,0 +1,36 @@
+slug: 02-insert-and-update
+title: Inserting and updating rows
+summary: Add data with INSERT, change it with UPDATE, see what happened with RETURNING.
+order: 2
+difficulty: beginner
+estimatedMinutes: 10
+tags:
+  - insert
+  - update
+  - returning
+  - dml
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: ross-inserted
+    type: query-returns
+    description: A row with email "ross@example.com" exists, named "Ross Geller", active.
+    sql: SELECT full_name, is_active FROM users WHERE email = 'ross@example.com'
+    expect:
+      rowCount: 1
+      rows: [["Ross Geller", true]]
+  - id: knuth-activated
+    type: query-returns
+    description: Donald Knuth (don@example.com) is now active.
+    sql: SELECT is_active FROM users WHERE email = 'don@example.com'
+    expect:
+      rowCount: 1
+      rows: [[true]]
+  - id: example-com-inactive-removed
+    type: query-returns
+    description: No inactive users remain after a bulk reactivation.
+    sql: SELECT count(*)::int FROM users WHERE is_active = false
+    expect:
+      rowCount: 1
+      rows: [[0]]

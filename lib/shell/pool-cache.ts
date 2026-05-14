@@ -80,26 +80,48 @@ function getPool(dsn: string): Pool {
   return pool;
 }
 
+function hostFromDsn(dsn: string): string {
+  const m = dsn.match(/^(?:postgres(?:ql)?:\/\/)?(?:[^@/]*@)?([^/?:\s]+)/);
+  return m?.[1] ?? "<unparseable>";
+}
+
 export async function acquireClient(
   dsn: string,
   timeoutMs = 30_000,
 ): Promise<PoolClient> {
   const pool = getPool(dsn);
+  const host = hostFromDsn(dsn);
   const deadline = Date.now() + timeoutMs;
   let attempt = 0;
   let lastError: unknown;
   while (Date.now() < deadline) {
     attempt++;
     try {
-      return await pool.connect();
+      const client = await pool.connect();
+      if (attempt > 1) {
+        console.log(
+          `[pg-pool] ${host} acquired after ${attempt} attempt(s)`,
+        );
+      }
+      return client;
     } catch (err) {
       lastError = err;
+      const detail =
+        err instanceof Error ? err.message : String(err);
+      console.error(
+        `[pg-pool] ${host} acquire attempt ${attempt} failed: ${detail}`,
+      );
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
       const wait = Math.min(250 * attempt, 1500, remaining);
       await new Promise((r) => setTimeout(r, wait));
     }
   }
+  const finalDetail =
+    lastError instanceof Error ? lastError.message : String(lastError);
+  console.error(
+    `[pg-pool] ${host} gave up after ${attempt} attempt(s) in ${timeoutMs}ms: ${finalDetail}`,
+  );
   throw lastError instanceof Error
     ? lastError
     : new Error(String(lastError));

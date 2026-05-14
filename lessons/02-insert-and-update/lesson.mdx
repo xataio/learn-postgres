@@ -1,0 +1,76 @@
+With your `users` table in hand, let's change it. SQL has three statements for DML: `INSERT` adds rows, `UPDATE` modifies existing ones, and `DELETE` removes them. This lesson focuses on the first two.
+
+## INSERT a single row
+
+The shape: `INSERT INTO <table> (col1, col2, ...) VALUES (val1, val2, ...);`
+
+<Run>
+INSERT INTO users (full_name, email, is_active)
+VALUES ('Ross Geller', 'ross@example.com', true);
+</Run>
+
+We named three columns out of five. The `id` is a `serial` (so Postgres allocates the next integer), and `signed_up_at` has `DEFAULT now()` — both get filled in automatically.
+
+<Check id="ross-inserted">
+Insert a row for **Ross Geller** with email `ross@example.com` and `is_active = true`.
+</Check>
+
+## Many rows in one statement
+
+`VALUES` can take a list of tuples, so a single INSERT can carry as many rows as you like. It's faster (one round trip, one transaction) and reads better.
+
+<Run>
+INSERT INTO users (full_name, email, is_active)
+VALUES
+  ('Monica Geller',  'monica@example.com',   true),
+  ('Chandler Bing',  'chandler@example.com', false);
+</Run>
+
+## UPDATE existing rows
+
+The shape: `UPDATE <table> SET col = expr WHERE <predicate>;`
+
+The `WHERE` clause is critical — omit it and you'll update **every row** in the table. Reach for `BEGIN; ... ROLLBACK;` if you want to dry-run a destructive update before committing.
+
+<Run>
+UPDATE users
+SET is_active = true
+WHERE email = 'don@example.com';
+</Run>
+
+<Check id="knuth-activated">
+Reactivate **Donald Knuth** (`don@example.com`).
+</Check>
+
+### Updating many rows
+
+Drop the highly-specific `WHERE` and an UPDATE happily touches a whole subset. Here's "reactivate everyone whose account got switched off":
+
+<Run>
+UPDATE users
+SET is_active = true
+WHERE is_active = false;
+</Run>
+
+<Check id="example-com-inactive-removed">
+After that statement runs, there should be zero inactive users left.
+</Check>
+
+## See what just happened: `RETURNING`
+
+`INSERT`, `UPDATE`, and `DELETE` all accept a `RETURNING` clause. Postgres sends back the affected rows in the same response — handy when you want to capture generated values like an auto-assigned `id`, or just confirm what changed.
+
+<Run>
+UPDATE users
+SET is_active = false
+WHERE email = 'ada@example.com'
+RETURNING id, full_name, is_active;
+</Run>
+
+In application code this is gold: you `INSERT ... RETURNING id` and skip a follow-up `SELECT`.
+
+## What you learned
+
+- `INSERT INTO ... VALUES (...)` — single or batched rows; defaulted columns fill themselves in.
+- `UPDATE ... SET ... WHERE ...` — and the `WHERE` is *non-optional in practice*.
+- `RETURNING` echoes the affected rows back so you don't need a follow-up query.
