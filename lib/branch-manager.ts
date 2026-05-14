@@ -262,29 +262,98 @@ async function resolveBranchDsn(
   }
 }
 
-async function runSeed(dsn: string, sql: string): Promise<void> {
+/**
+ * Decide whether a seed failure is worth retrying. Retryable:
+ *  - "authentication failed" / "password authentication" / "sasl" message —
+ *    Xata's WS proxy rejects auth before the pg protocol starts, so there's
+ *    often no SQLSTATE; match by text.
+ *  - SQLSTATE class 28 (auth) and 08 (connection_exception)
+ *  - any error without a SQLSTATE code — transport/WebSocket/network errors
+ *    (undici TypeError, ws termination, ECONNRESET, etc.)
+ * Non-retryable: any other SQLSTATE (syntax 42xxx, integrity 23xxx, …)
+ * because re-running the same SQL won't change the outcome.
+ */
+function isRetryableSeedError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: unknown; message?: unknown };
+  if (
+    typeof e.message === "string" &&
+    /authentication failed|password authentication|sasl/i.test(e.message)
+  ) {
+    return true;
+  }
+  const code = e.code;
+  if (typeof code === "string" && /^[0-9A-Z]{5}$/.test(code)) {
+    return code.startsWith("28") || code.startsWith("08");
+  }
+  return true;
+}
+
+function describeErr(err: unknown): string {
+  if (!err || typeof err !== "object") return String(err);
+  const e = err as { message?: unknown; code?: unknown; name?: unknown };
+  const msg = typeof e.message === "string" && e.message ? e.message : "<no msg>";
+  const code = typeof e.code === "string" || typeof e.code === "number"
+    ? ` code=${e.code}`
+    : "";
+  const name = typeof e.name === "string" && e.name !== "Error" ? `${e.name}: ` : "";
+  return `${name}${msg}${code}`;
+}
+
+/**
+ * Seed a freshly-created branch with the lesson's SQL. Retries transient
+ * failures (auth propagation, dropped WS connections) until `timeoutMs`,
+ * dropping the pool between attempts so each retry gets a fresh socket.
+ * Throws the last error on deadline, or immediately on a non-retryable one.
+ */
+async function runSeed(
+  dsn: string,
+  sql: string,
+  timeoutMs = 30_000,
+): Promise<void> {
   const trimmed = sql.trim();
   if (!trimmed) return;
 
-  // Reuse the shared pool: same WS proxy, same retry budget (30s by default).
-  // The auth/credential propagation race after branch creation is what tends
-  // to bite — the pool's per-attempt logging makes those visible.
-  const client = await acquireClient(dsn);
-  try {
-    await client.query(trimmed);
-  } finally {
-    client.release();
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    attempt++;
+    const remaining = deadline - Date.now();
+    try {
+      // Cap per-attempt acquire so the seed deadline fits multiple tries —
+      // the pool's own 30s retry would otherwise eat the entire budget.
+      const client = await acquireClient(dsn, Math.min(remaining, 8_000));
+      try {
+        await client.query(trimmed);
+      } finally {
+        client.release();
+      }
+      if (attempt > 1) {
+        console.log(`[seed] succeeded on attempt ${attempt}`);
+      }
+      return;
+    } catch (err) {
+      lastError = err;
+      if (!isRetryableSeedError(err)) {
+        console.error(
+          `[seed] attempt ${attempt} non-retryable: ${describeErr(err)}`,
+        );
+        throw err;
+      }
+      const left = deadline - Date.now();
+      if (left <= 0) break;
+      console.warn(
+        `[seed] attempt ${attempt} failed (${describeErr(err)}) — dropping pool and retrying`,
+      );
+      await dropPool(dsn).catch(() => { });
+      const wait = Math.min(500 * 2 ** (attempt - 1), 4_000, left);
+      await new Promise((r) => setTimeout(r, wait));
+    }
   }
-}
-
-function isAuthError(err: unknown): boolean {
-  if (!err || typeof err !== "object") return false;
-  const e = err as { code?: string; message?: string };
-  // SQLSTATE class 28 = invalid_authorization_specification / invalid_password
-  if (typeof e.code === "string" && e.code.startsWith("28")) return true;
-  return /authentication failed|password authentication failed|sasl/i.test(
-    e.message ?? "",
-  );
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(String(lastError));
 }
 
 /**
@@ -389,34 +458,13 @@ export async function ensureBranchForLesson(
   try {
     await runSeed(dsn, lesson.seedSql);
   } catch (err) {
-    // Auth failures right after create are usually credential propagation
-    // lag on the compute node — drop the pool, wait briefly, retry once.
-    if (isAuthError(err)) {
-      console.warn(
-        `${tag} seed auth error for ${branch.id} dsn=${maskDsn(dsn)} (${(err as Error).message}) — retrying once after short wait`,
-      );
-      await dropPool(dsn).catch(() => { });
-      await new Promise((r) => setTimeout(r, 2000));
-      try {
-        await runSeed(dsn, lesson.seedSql);
-      } catch (retryErr) {
-        console.error(
-          `${tag} seed retry failed for ${branch.id} dsn=${maskDsn(dsn)}: ${(retryErr as Error).message}`,
-        );
-        await deleteBranch(branch.id).catch(() => { });
-        throw new Error(
-          `Seed for ${lesson.meta.slug} failed: ${(retryErr as Error).message}`,
-        );
-      }
-    } else {
-      console.error(
-        `${tag} seed failed for ${branch.id}: ${(err as Error).message}`,
-      );
-      await deleteBranch(branch.id).catch(() => { });
-      throw new Error(
-        `Seed for ${lesson.meta.slug} failed: ${(err as Error).message}`,
-      );
-    }
+    console.error(
+      `${tag} seed failed for ${branch.id} dsn=${maskDsn(dsn)}: ${(err as Error).message}`,
+    );
+    await deleteBranch(branch.id).catch(() => { });
+    throw new Error(
+      `Seed for ${lesson.meta.slug} failed: ${(err as Error).message}`,
+    );
   }
 
   try {
