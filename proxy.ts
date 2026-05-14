@@ -16,8 +16,8 @@ export function proxy(request: NextRequest) {
   const cookie = getSessionCookie(request);
   if (!cookie) {
     const url = request.nextUrl.clone();
-    url.pathname = "/sign-in";
-    url.searchParams.set("next", pathname);
+    url.pathname = "/";
+    url.search = "";
     return NextResponse.redirect(url);
   }
   return NextResponse.next();

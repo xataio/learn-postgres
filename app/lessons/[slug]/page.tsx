@@ -32,7 +32,7 @@ export default async function LessonPage({
   const { slug } = await params;
 
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect(`/sign-in?next=/lessons/${slug}`);
+  if (!session) redirect("/");
 
   const lesson = await getLesson(slug);
   if (!lesson) notFound();

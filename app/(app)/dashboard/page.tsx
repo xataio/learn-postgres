@@ -48,7 +48,7 @@ function classify(passed: number, total: number): Bucket {
 
 export default async function DashboardPage() {
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/sign-in?next=/dashboard");
+  if (!session) redirect("/");
 
   const lessons = await getAllLessons();
   const progress = await getProgressCounts(
