@@ -1,5 +1,6 @@
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
+import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { getLesson } from "@/lib/lessons";
 import { resetBranchForLesson } from "@/lib/branch-manager";
@@ -21,6 +22,10 @@ export async function POST(_req: Request, ctx: Ctx) {
 
   try {
     const row = await resetBranchForLesson(session.user.id, lesson);
+    // The lesson page reads the branch row in a server component, so the RSC
+    // payload needs invalidating before router.refresh() will pick up the new
+    // branch name.
+    revalidatePath(`/lessons/${slug}`);
     return NextResponse.json({
       ok: true,
       branch: { id: row.xataBranchId, name: row.xataBranchName },

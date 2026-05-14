@@ -35,16 +35,16 @@ export function SandboxPanel({ lessonSlug, branchName }: Props) {
       if (!res.ok) {
         const body = await res.json().catch(() => ({}));
         setError(body.error ?? `Reset failed (${res.status})`);
-        setFetching(false);
         return;
       }
+      // Hand off the busy state to isPending so the spinner stays up until
+      // the refreshed RSC payload has rendered.
+      startTransition(() => router.refresh());
     } catch (err) {
       setError((err as Error).message);
+    } finally {
       setFetching(false);
-      return;
     }
-    startTransition(() => router.refresh());
-    setFetching(false);
   };
 
   return (
