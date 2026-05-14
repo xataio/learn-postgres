@@ -53,7 +53,7 @@ function evictOldest(): void {
   if (oldestKey) {
     const victim = pools.get(oldestKey);
     pools.delete(oldestKey);
-    victim?.pool.end().catch(() => {});
+    victim?.pool.end().catch(() => { });
   }
 }
 
@@ -71,8 +71,10 @@ function getPool(dsn: string): Pool {
     // statement_timeout at session startup so we don't issue a SET per query.
     options: `-c statement_timeout=${STATEMENT_TIMEOUT_MS}`,
   });
-  pool.on("error", (err: Error) => {
-    console.error(`[pg-pool] idle client error: ${err.message}`);
+  pool.on("error", (err: Error & { code?: string }) => {
+    console.error(
+      `[pg-pool] idle client error: ${err.message || err.code || String(err)}`,
+    );
   });
 
   pools.set(dsn, { pool, lastUsed: Date.now() });
@@ -131,5 +133,5 @@ export async function dropPool(dsn: string): Promise<void> {
   const entry = pools.get(dsn);
   if (!entry) return;
   pools.delete(dsn);
-  await entry.pool.end().catch(() => {});
+  await entry.pool.end().catch(() => { });
 }

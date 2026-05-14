@@ -71,8 +71,8 @@ async function enforceBranchQuota(userId: string): Promise<void> {
     console.log(
       `[quota] user=${shortUserId(userId)} evicting ${row.xataBranchName} (lesson=${row.lessonSlug})`,
     );
-    if (row.connectionString) await dropPool(row.connectionString).catch(() => {});
-    await deleteBranch(row.xataBranchId).catch(() => {});
+    if (row.connectionString) await dropPool(row.connectionString).catch(() => { });
+    await deleteBranch(row.xataBranchId).catch(() => { });
     await db
       .delete(userBranch)
       .where(
@@ -277,6 +277,16 @@ async function runSeed(dsn: string, sql: string): Promise<void> {
   }
 }
 
+function isAuthError(err: unknown): boolean {
+  if (!err || typeof err !== "object") return false;
+  const e = err as { code?: string; message?: string };
+  // SQLSTATE class 28 = invalid_authorization_specification / invalid_password
+  if (typeof e.code === "string" && e.code.startsWith("28")) return true;
+  return /authentication failed|password authentication failed|sasl/i.test(
+    e.message ?? "",
+  );
+}
+
 /**
  * Ensure the calling user has a Postgres branch for this lesson. Creates +
  * seeds one the first time; subsequent calls reuse and refresh last_used_at.
@@ -347,7 +357,7 @@ export async function ensureBranchForLesson(
     console.error(
       `${tag} await-connection-string failed for ${branch.id}: ${(err as Error).message}`,
     );
-    await deleteBranch(branch.id).catch(() => {});
+    await deleteBranch(branch.id).catch(() => { });
     throw err;
   }
 
@@ -358,20 +368,41 @@ export async function ensureBranchForLesson(
     console.error(
       `${tag} resolve-dsn failed for ${branch.id}: ${(err as Error).message}`,
     );
-    await deleteBranch(branch.id).catch(() => {});
+    await deleteBranch(branch.id).catch(() => { });
     throw err;
   }
 
   try {
     await runSeed(dsn, lesson.seedSql);
   } catch (err) {
-    console.error(
-      `${tag} seed failed for ${branch.id}: ${(err as Error).message}`,
-    );
-    await deleteBranch(branch.id).catch(() => {});
-    throw new Error(
-      `Seed for ${lesson.meta.slug} failed: ${(err as Error).message}`,
-    );
+    // Auth failures right after create are usually credential propagation
+    // lag on the compute node — drop the pool, wait briefly, retry once.
+    if (isAuthError(err)) {
+      console.warn(
+        `${tag} seed auth error for ${branch.id} ${connectionString} (${(err as Error).message}) — retrying once after short wait`,
+      );
+      await dropPool(dsn).catch(() => { });
+      await new Promise((r) => setTimeout(r, 2000));
+      try {
+        await runSeed(dsn, lesson.seedSql);
+      } catch (retryErr) {
+        console.error(
+          `${tag} seed retry failed for ${branch.id}: ${(retryErr as Error).message}`,
+        );
+        await deleteBranch(branch.id).catch(() => { });
+        throw new Error(
+          `Seed for ${lesson.meta.slug} failed: ${(retryErr as Error).message}`,
+        );
+      }
+    } else {
+      console.error(
+        `${tag} seed failed for ${branch.id}: ${(err as Error).message}`,
+      );
+      await deleteBranch(branch.id).catch(() => { });
+      throw new Error(
+        `Seed for ${lesson.meta.slug} failed: ${(err as Error).message}`,
+      );
+    }
   }
 
   try {
@@ -388,7 +419,7 @@ export async function ensureBranchForLesson(
     return row;
   } catch (err) {
     // Concurrent request already inserted; drop ours and reuse theirs.
-    await deleteBranch(branch.id).catch(() => {});
+    await deleteBranch(branch.id).catch(() => { });
     const existingAfterRace = await findExisting(userId, lesson.meta.slug);
     if (existingAfterRace) return existingAfterRace;
     throw err;
@@ -407,7 +438,7 @@ export async function dropBranchForLesson(
   if (!row) return;
 
   if (row.connectionString) await dropPool(row.connectionString);
-  await deleteBranch(row.xataBranchId).catch(() => {});
+  await deleteBranch(row.xataBranchId).catch(() => { });
   await db
     .delete(userBranch)
     .where(
