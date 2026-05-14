@@ -48,7 +48,7 @@ export default async function LessonPage({
   const components = buildLessonComponents(lesson, "interactive");
 
   return (
-    <div className="mx-auto max-w-7xl px-6 py-8">
+    <div className="px-6 py-6">
       <div className="text-xs text-zinc-500">
         <Link href="/lessons" className="hover:underline">
           ← All lessons
@@ -64,8 +64,8 @@ export default async function LessonPage({
         </div>
       </header>
 
-      <div className="mt-6 grid gap-6 lg:grid-cols-2">
-        <article className="prose prose-zinc max-w-none dark:prose-invert">
+      <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
+        <article className="prose prose-zinc dark:prose-invert">
           <MDXRemote source={lesson.mdxSource} components={components} />
         </article>
 
