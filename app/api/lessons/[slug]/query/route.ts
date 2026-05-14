@@ -34,12 +34,17 @@ export async function POST(req: Request, ctx: Ctx) {
     );
   }
 
-  const branch = await db.query.userBranch.findFirst({
-    where: and(
-      eq(userBranch.userId, session.user.id),
-      eq(userBranch.lessonSlug, slug),
-    ),
-  });
+  const rows = await db
+    .select()
+    .from(userBranch)
+    .where(
+      and(
+        eq(userBranch.userId, session.user.id),
+        eq(userBranch.lessonSlug, slug),
+      ),
+    )
+    .limit(1);
+  const branch = rows[0];
   if (!branch) {
     return NextResponse.json(
       { error: "No sandbox for this lesson yet — open the lesson page first." },
@@ -48,12 +53,17 @@ export async function POST(req: Request, ctx: Ctx) {
   }
   if (!branch.connectionString) {
     console.error(
-      `[query-route] user=${session.user.id} lesson=${slug} branch=${branch.xataBranchId} has no connection_string`,
+      `[query-route] empty connection_string for user=${session.user.id} lesson=${slug}\n` +
+        `  row keys      = ${JSON.stringify(Object.keys(branch))}\n` +
+        `  connStr typeof= ${typeof branch.connectionString}\n` +
+        `  connStr len   = ${(branch.connectionString as unknown as string | null | undefined)?.length ?? "n/a"}\n` +
+        `  xataBranchId  = ${JSON.stringify(branch.xataBranchId)}\n` +
+        `  xataBranchName= ${JSON.stringify(branch.xataBranchName)}`,
     );
     return NextResponse.json(
       {
         error:
-          "Your sandbox record is incomplete — click Reset above to recreate it.",
+          "Your sandbox record is incomplete — refresh the page to repair it.",
       },
       { status: 409 },
     );

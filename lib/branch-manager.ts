@@ -54,6 +54,53 @@ async function createBranchWith409Retry(input: {
 }
 
 /**
+ * Pull the connection string for an existing row that's missing one — usually
+ * a row written before the create-time polling fix landed. Returns the healed
+ * row, or null if we couldn't recover (caller should drop + recreate).
+ */
+async function healMissingConnectionString(
+  row: UserBranchRow,
+): Promise<UserBranchRow | null> {
+  if (!row.xataBranchId) return null;
+
+  console.log(
+    `[heal] polling Xata for connection string for branch ${row.xataBranchId}`,
+  );
+  let connectionString: string;
+  try {
+    connectionString = await awaitConnectionString(row.xataBranchId, null);
+  } catch (err) {
+    console.error(
+      `[heal] connection string still null after polling: ${(err as Error).message}`,
+    );
+    return null;
+  }
+
+  let dsn: string;
+  try {
+    dsn = await resolveBranchDsn(row.xataBranchId, connectionString);
+  } catch (err) {
+    console.error(`[heal] could not resolve DSN: ${(err as Error).message}`);
+    return null;
+  }
+
+  const [updated] = await db
+    .update(userBranch)
+    .set({ connectionString: dsn, lastUsedAt: new Date() })
+    .where(
+      and(
+        eq(userBranch.userId, row.userId),
+        eq(userBranch.lessonSlug, row.lessonSlug),
+      ),
+    )
+    .returning();
+  console.log(
+    `[heal] row repaired for branch ${row.xataBranchId}`,
+  );
+  return updated;
+}
+
+/**
  * After a successful create-branch call, Xata sometimes still returns a null
  * `connectionString` because the branch is still being provisioned. Poll the
  * branch details with backoff until it's populated.
@@ -99,12 +146,17 @@ async function findExisting(
   userId: string,
   lessonSlug: string,
 ): Promise<UserBranchRow | undefined> {
-  return db.query.userBranch.findFirst({
-    where: and(
-      eq(userBranch.userId, userId),
-      eq(userBranch.lessonSlug, lessonSlug),
-    ),
-  });
+  const rows = await db
+    .select()
+    .from(userBranch)
+    .where(
+      and(
+        eq(userBranch.userId, userId),
+        eq(userBranch.lessonSlug, lessonSlug),
+      ),
+    )
+    .limit(1);
+  return rows[0];
 }
 
 async function touchLastUsed(userId: string, lessonSlug: string) {
@@ -206,7 +258,22 @@ export async function ensureBranchForLesson(
   userId: string,
   lesson: Lesson,
 ): Promise<UserBranchRow> {
-  const existing = await findExisting(userId, lesson.meta.slug);
+  let existing = await findExisting(userId, lesson.meta.slug);
+
+  // Heal stale rows: when create-branch originally returned a null
+  // connectionString and the polling fix wasn't in place yet, rows can be
+  // stored with an empty DSN. Re-fetch the connection string from Xata
+  // before falling back to a full recreate.
+  if (existing && !existing.connectionString) {
+    const healed = await healMissingConnectionString(existing);
+    if (healed) return healed;
+    console.warn(
+      `[ensure-branch] could not heal row for user=${userId} lesson=${lesson.meta.slug} — dropping and recreating`,
+    );
+    await dropBranchForLesson(userId, lesson.meta.slug);
+    existing = undefined;
+  }
+
   if (existing) {
     await touchLastUsed(userId, lesson.meta.slug);
     return existing;
@@ -315,9 +382,10 @@ export async function cleanupIdleBranches(
   idleDays = 7,
 ): Promise<CleanupResult> {
   const cutoff = new Date(Date.now() - idleDays * 24 * 60 * 60 * 1000);
-  const idle = await db.query.userBranch.findMany({
-    where: lt(userBranch.lastUsedAt, cutoff),
-  });
+  const idle = await db
+    .select()
+    .from(userBranch)
+    .where(lt(userBranch.lastUsedAt, cutoff));
 
   const result: CleanupResult = {
     scanned: idle.length,
