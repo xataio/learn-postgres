@@ -17,6 +17,16 @@ export const auth = betterAuth({
     github: {
       clientId: process.env.GITHUB_CLIENT_ID ?? "",
       clientSecret: process.env.GITHUB_CLIENT_SECRET ?? "",
+      // Users who keep their email private on GitHub get no email back from
+      // /user or /user/emails — fall back to GitHub's own noreply alias so
+      // sign-in succeeds instead of redirecting to ?error=email_not_found.
+      mapProfileToUser: (profile) => {
+        if (profile.email) return {};
+        return {
+          email: `${profile.id}+${profile.login}@users.noreply.github.com`,
+          emailVerified: false,
+        };
+      },
     },
   },
   session: {
