@@ -57,6 +57,33 @@ function evictOldest(): void {
   }
 }
 
+/**
+ * The Neon driver pipes ws errors through as DOM `ErrorEvent` objects, where
+ * the useful info is in `.error` (and sometimes `.message`/`.code` are blank).
+ * Unwrap once so logs show the underlying Postgres/network error.
+ */
+function formatPoolError(err: unknown): string {
+  if (err == null) return String(err);
+  if (typeof err !== "object") return String(err);
+  const e = err as {
+    message?: string;
+    code?: string;
+    name?: string;
+    type?: string;
+    error?: unknown;
+  };
+  if (e.error && e.error !== err) {
+    return `${e.type ?? "event"}: ${formatPoolError(e.error)}`;
+  }
+  const parts = [e.name, e.message, e.code].filter(Boolean);
+  if (parts.length) return parts.join(" ");
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
 function getPool(dsn: string): Pool {
   const existing = pools.get(dsn);
   if (existing) {
@@ -71,10 +98,8 @@ function getPool(dsn: string): Pool {
     // statement_timeout at session startup so we don't issue a SET per query.
     options: `-c statement_timeout=${STATEMENT_TIMEOUT_MS}`,
   });
-  pool.on("error", (err: Error & { code?: string }) => {
-    console.error(
-      `[pg-pool] idle client error: ${err.message || err.code || String(err)}`,
-    );
+  pool.on("error", (err: unknown) => {
+    console.error(`[pg-pool] idle client error: ${formatPoolError(err)}`);
   });
 
   pools.set(dsn, { pool, lastUsed: Date.now() });
@@ -108,10 +133,8 @@ export async function acquireClient(
       return client;
     } catch (err) {
       lastError = err;
-      const detail =
-        err instanceof Error ? err.message : String(err);
       console.error(
-        `[pg-pool] ${host} acquire attempt ${attempt} failed: ${detail}`,
+        `[pg-pool] ${host} acquire attempt ${attempt} failed: ${formatPoolError(err)}`,
       );
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
@@ -119,10 +142,8 @@ export async function acquireClient(
       await new Promise((r) => setTimeout(r, wait));
     }
   }
-  const finalDetail =
-    lastError instanceof Error ? lastError.message : String(lastError);
   console.error(
-    `[pg-pool] ${host} gave up after ${attempt} attempt(s) in ${timeoutMs}ms: ${finalDetail}`,
+    `[pg-pool] ${host} gave up after ${attempt} attempt(s) in ${timeoutMs}ms: ${formatPoolError(lastError)}`,
   );
   throw lastError instanceof Error
     ? lastError
