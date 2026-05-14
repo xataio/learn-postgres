@@ -1,7 +1,9 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { getSessionCookie } from "better-auth/cookies";
 
-const PROTECTED_PREFIXES = ["/dashboard", "/lessons"];
+// /lessons/[slug] is also protected but enforced at the page level so that
+// the public catalog (/lessons) and read-only preview pages stay open.
+const PROTECTED_PREFIXES = ["/dashboard"];
 
 export function proxy(request: NextRequest) {
   const { pathname } = request.nextUrl;
@@ -22,5 +24,5 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/lessons/:path*"],
+  matcher: ["/dashboard/:path*"],
 };

@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { headers } from "next/headers";
 import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
@@ -16,8 +17,17 @@ export default async function DashboardPage() {
         Signed in as {session.user.email}.
       </p>
 
-      <div className="mt-8 rounded-md border border-black/10 p-4 text-sm text-zinc-500 dark:border-white/10">
-        Lessons will appear here once Phase 1 lands.
+      <div className="mt-8 rounded-md border border-black/10 p-4 dark:border-white/10">
+        <div className="text-sm font-medium">Lessons</div>
+        <p className="mt-1 text-sm text-zinc-500">
+          Short, hands-on Postgres exercises. Pick one to begin.
+        </p>
+        <Link
+          href="/lessons"
+          className="mt-3 inline-block text-sm font-medium underline underline-offset-2"
+        >
+          Browse the catalog →
+        </Link>
       </div>
 
       <div className="mt-6">

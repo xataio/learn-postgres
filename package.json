@@ -10,18 +10,25 @@
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
-    "db:studio": "drizzle-kit studio"
+    "db:studio": "drizzle-kit studio",
+    "lessons:validate": "tsx scripts/validate-lessons.ts",
+    "new-lesson": "tsx scripts/new-lesson.ts"
   },
   "dependencies": {
     "better-auth": "^1.6.11",
     "drizzle-orm": "^0.45.2",
+    "js-yaml": "^4.1.1",
     "next": "16.2.6",
+    "next-mdx-remote": "^6.0.0",
     "pg": "^8.20.0",
     "react": "19.2.4",
-    "react-dom": "19.2.4"
+    "react-dom": "19.2.4",
+    "zod": "^4.4.3"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@tailwindcss/typography": "^0.5.19",
+    "@types/js-yaml": "^4.0.9",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
     "@types/react": "^19",

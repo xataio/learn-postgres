@@ -1,0 +1,62 @@
+You've got a small `users` table to play with. The seed loaded **10 rows** — some active, some not. We'll start with the most fundamental SQL statement: `SELECT`.
+
+## Read every row
+
+The dumbest, most useful query: ask for everything.
+
+<Run>
+SELECT * FROM users;
+</Run>
+
+You'll see ten rows, all five columns. The `*` is a wildcard for "every column."
+
+<Check id="seed-loaded">
+Run a `SELECT count(*) FROM users` and you should see **10**. That confirms your sandbox has the right seed loaded.
+</Check>
+
+## Pick the columns you want
+
+`*` is convenient but wasteful — and in real queries you almost always know exactly which columns you need. Name them.
+
+<Run>
+SELECT full_name, email FROM users;
+</Run>
+
+Order matters: the result columns come back in the order you ask for them.
+
+## Filter rows with `WHERE`
+
+A `WHERE` clause restricts which rows are returned. Boolean expressions on column values are the bread and butter.
+
+<Run>
+SELECT full_name, signed_up_at
+FROM users
+WHERE is_active = true;
+</Run>
+
+There are seven active users in the seed. Try flipping the predicate to `is_active = false` to see the three who aren't.
+
+<Check id="has-is-active-column">
+The `users` table has an `is_active` column of type `boolean`. You can verify this with `\d users` once the interactive shell lands.
+</Check>
+
+## Sort with `ORDER BY`
+
+The order of rows coming out of a query is **not** guaranteed unless you ask for it. `ORDER BY` makes it explicit.
+
+<Run>
+SELECT full_name, signed_up_at
+FROM users
+ORDER BY signed_up_at DESC
+LIMIT 3;
+</Run>
+
+`DESC` reverses the default ascending order, and `LIMIT 3` caps the result at three rows. Useful for "top N" style queries.
+
+## What you learned
+
+- `SELECT *` vs. `SELECT col1, col2` — projection
+- `WHERE` — filter rows by predicate
+- `ORDER BY ... DESC LIMIT N` — sort and cap
+
+Up next: the `WHERE` clause has a lot more in it than `=`.

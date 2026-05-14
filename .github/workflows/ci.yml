@@ -1,0 +1,38 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck
+        run: npx tsc --noEmit
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Validate lessons
+        run: npm run lessons:validate
+
+      - name: Next.js build
+        env:
+          # Build doesn't connect to the DB — these just need to be syntactically valid
+          # so module-load-time validation passes. Real values come from runtime env.
+          DATABASE_URL: "postgresql://ci:ci@localhost:5432/ci?sslmode=disable"
+          BETTER_AUTH_SECRET: "ci-only-not-used-at-build"
+          BETTER_AUTH_URL: "http://localhost:3000"
+          NEXT_PUBLIC_APP_URL: "http://localhost:3000"
+        run: npm run build

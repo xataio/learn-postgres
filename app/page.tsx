@@ -12,7 +12,7 @@ export default function Home() {
           with SQL in a psql-like terminal — no setup, no docker, no resets.
         </p>
 
-        <div className="mt-10 flex gap-3">
+        <div className="mt-10 flex flex-wrap gap-3">
           <Link
             href="/sign-up"
             className="rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90"
@@ -20,10 +20,16 @@ export default function Home() {
             Get started
           </Link>
           <Link
-            href="/sign-in"
+            href="/lessons"
             className="rounded-md border border-black/10 px-5 py-2.5 text-sm font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
           >
-            Sign in
+            Browse lessons
+          </Link>
+          <Link
+            href="/sign-in"
+            className="rounded-md px-5 py-2.5 text-sm font-medium text-zinc-600 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100"
+          >
+            Sign in →
           </Link>
         </div>
 
