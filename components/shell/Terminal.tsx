@@ -3,7 +3,7 @@
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Readline } from "./readline";
-import { loadHistory, pushHistory } from "./history";
+import { clearHistory, loadHistory, pushHistory } from "./history";
 import { expandMeta } from "./meta";
 import {
   formatClientError,
@@ -55,6 +55,7 @@ export function Terminal({ lessonSlug }: Props) {
     let dataDisposable: { dispose(): void } | null = null;
     let resizeObserver: ResizeObserver | null = null;
     let runHandler: ((e: Event) => void) | null = null;
+    let clearHandler: (() => void) | null = null;
     let cancelled = false;
 
     (async () => {
@@ -114,6 +115,15 @@ export function Terminal({ lessonSlug }: Props) {
         term?.focus();
       };
       window.addEventListener("learn:run", runHandler);
+
+      clearHandler = () => {
+        clearHistory();
+        term?.clear();
+        term?.write(BANNER);
+        readline.promptAgain();
+        term?.focus();
+      };
+      window.addEventListener("learn:clear-shell", clearHandler);
     })();
 
     return () => {
@@ -121,6 +131,8 @@ export function Terminal({ lessonSlug }: Props) {
       dataDisposable?.dispose();
       resizeObserver?.disconnect();
       if (runHandler) window.removeEventListener("learn:run", runHandler);
+      if (clearHandler)
+        window.removeEventListener("learn:clear-shell", clearHandler);
       term?.dispose();
     };
   }, [lessonSlug]);

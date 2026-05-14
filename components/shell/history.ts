@@ -37,3 +37,12 @@ export function pushHistory(entry: string): void {
   while (list.length > MAX) list.shift();
   write(list);
 }
+
+export function clearHistory(): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.removeItem(KEY);
+  } catch {
+    // ignore — storage might be disabled
+  }
+}

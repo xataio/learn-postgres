@@ -20,6 +20,10 @@ export function SandboxPanel({ lessonSlug, branchName }: Props) {
   // Either way the user sees the busy state.
   const busy = fetching || isPending;
 
+  const onClearShell = () => {
+    window.dispatchEvent(new CustomEvent("learn:clear-shell"));
+  };
+
   const onReset = async () => {
     setError(null);
     setFetching(true);
@@ -57,16 +61,28 @@ export function SandboxPanel({ lessonSlug, branchName }: Props) {
             {branchName}
           </span>
         </span>
-        <button
-          type="button"
-          onClick={onReset}
-          disabled={busy}
-          aria-busy={busy}
-          className="inline-flex shrink-0 items-center gap-1.5 rounded-md border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:hover:bg-white/[.04]"
-        >
-          {busy && <Spinner />}
-          {busy ? "Resetting…" : "Reset"}
-        </button>
+        <div className="flex shrink-0 items-center gap-1.5">
+          <button
+            type="button"
+            onClick={onClearShell}
+            disabled={busy}
+            title="Clear shell output and command history"
+            className="rounded-md border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:hover:bg-white/[.04]"
+          >
+            Clear
+          </button>
+          <button
+            type="button"
+            onClick={onReset}
+            disabled={busy}
+            aria-busy={busy}
+            title="Drop and recreate the Postgres sandbox"
+            className="inline-flex items-center gap-1.5 rounded-md border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] disabled:cursor-not-allowed disabled:opacity-60 dark:border-white/10 dark:hover:bg-white/[.04]"
+          >
+            {busy && <Spinner />}
+            {busy ? "Resetting…" : "Reset"}
+          </button>
+        </div>
       </div>
 
       <div className="relative h-[60dvh] min-h-[320px] lg:h-auto lg:flex-1 lg:min-h-0">
