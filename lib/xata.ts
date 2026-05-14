@@ -126,6 +126,10 @@ export async function createBranch(input: {
       description: input.description,
       mode: "inherit",
       parentID: input.parentId,
+      // Keep learner branches awake — waking from scale-to-zero on a raw TCP
+      // connect doesn't reliably resume in time and gives ECONNREFUSED.
+      // The daily cleanup cron drops truly idle branches anyway.
+      scaleToZero: { enabled: false },
     }),
   });
 }
@@ -170,15 +174,16 @@ export async function rotateCredentials(
 
 /**
  * Compose a ready-to-use Postgres DSN by injecting credentials into the
- * branch's connection string template.
+ * branch's connection string template. URL.username/password setters already
+ * percent-encode, so pass raw values.
  */
 export function buildBranchDsn(
   connectionString: string,
   creds: XataCredentials,
 ): string {
   const url = new URL(connectionString);
-  url.username = encodeURIComponent(creds.username);
-  url.password = encodeURIComponent(creds.password);
+  url.username = creds.username;
+  url.password = creds.password;
   if (!url.searchParams.has("sslmode")) url.searchParams.set("sslmode", "require");
   return url.toString();
 }

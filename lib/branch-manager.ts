@@ -10,6 +10,7 @@ import {
   buildBranchDsn,
   createBranch,
   deleteBranch,
+  getBranch,
   getCredentials,
   getParentBranchId,
   readCredentialsFromDsn,
@@ -50,6 +51,48 @@ async function createBranchWith409Retry(input: {
     }
     throw err;
   }
+}
+
+/**
+ * After a successful create-branch call, Xata sometimes still returns a null
+ * `connectionString` because the branch is still being provisioned. Poll the
+ * branch details with backoff until it's populated.
+ */
+async function awaitConnectionString(
+  branchId: string,
+  initial: string | null | undefined,
+  timeoutMs = 60_000,
+): Promise<string> {
+  if (initial) return initial;
+
+  const deadline = Date.now() + timeoutMs;
+  let attempt = 0;
+  while (Date.now() < deadline) {
+    attempt++;
+    const remaining = deadline - Date.now();
+    const wait = Math.min(500 + 500 * attempt, 3000, remaining);
+    await new Promise((r) => setTimeout(r, wait));
+    let updated;
+    try {
+      updated = await getBranch(branchId);
+    } catch (err) {
+      console.error(
+        `[branch-create] poll attempt ${attempt} for ${branchId} failed: ${(err as Error).message}`,
+      );
+      continue;
+    }
+    if (updated.connectionString) {
+      if (attempt > 1) {
+        console.log(
+          `[branch-create] ${branchId} connection string ready after ${attempt} poll(s)`,
+        );
+      }
+      return updated.connectionString;
+    }
+  }
+  throw new Error(
+    `Xata never returned a connection string for branch ${branchId} (timed out after ${timeoutMs}ms)`,
+  );
 }
 
 async function findExisting(
@@ -177,16 +220,20 @@ export async function ensureBranchForLesson(
     description: lesson.meta.slug.slice(0, 50),
   });
 
-  if (!branch.connectionString) {
-    await deleteBranch(branch.id).catch(() => {});
-    throw new Error(
-      `Xata created branch ${branch.id} without a connection string.`,
+  let connectionString: string;
+  try {
+    connectionString = await awaitConnectionString(
+      branch.id,
+      branch.connectionString,
     );
+  } catch (err) {
+    await deleteBranch(branch.id).catch(() => {});
+    throw err;
   }
 
   let dsn: string;
   try {
-    dsn = await resolveBranchDsn(branch.id, branch.connectionString);
+    dsn = await resolveBranchDsn(branch.id, connectionString);
   } catch (err) {
     await deleteBranch(branch.id).catch(() => {});
     throw err;

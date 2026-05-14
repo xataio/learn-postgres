@@ -46,6 +46,18 @@ export async function POST(req: Request, ctx: Ctx) {
       { status: 404 },
     );
   }
+  if (!branch.connectionString) {
+    console.error(
+      `[query-route] user=${session.user.id} lesson=${slug} branch=${branch.xataBranchId} has no connection_string`,
+    );
+    return NextResponse.json(
+      {
+        error:
+          "Your sandbox record is incomplete — click Reset above to recreate it.",
+      },
+      { status: 409 },
+    );
+  }
 
   // touch last_used_at non-blocking
   db

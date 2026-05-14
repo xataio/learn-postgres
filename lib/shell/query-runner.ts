@@ -14,13 +14,54 @@ function connectTimeoutMs(): number {
   return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_CONNECT_TIMEOUT_MS;
 }
 
+type ConnectErrorDetails = Error & {
+  code?: string;
+  errno?: number;
+  syscall?: string;
+  address?: string;
+  port?: number;
+  hostname?: string;
+};
+
+function describeConnectError(err: unknown): string {
+  if (err === null || err === undefined) return "no error details";
+  if (typeof err === "string") return err || "(empty error)";
+  if (err instanceof Error) {
+    const e = err as ConnectErrorDetails;
+    const base = e.message?.trim() || e.name || e.constructor?.name || "Error";
+    const parts: string[] = [base];
+    if (e.code) parts.push(`code=${e.code}`);
+    if (typeof e.errno === "number") parts.push(`errno=${e.errno}`);
+    if (e.syscall) parts.push(`syscall=${e.syscall}`);
+    if (e.address)
+      parts.push(`address=${e.address}${e.port ? `:${e.port}` : ""}`);
+    else if (e.hostname) parts.push(`host=${e.hostname}`);
+    return parts.join(" ");
+  }
+  try {
+    return JSON.stringify(err);
+  } catch {
+    return String(err);
+  }
+}
+
+function hostFromDsn(dsn: string): string {
+  // Use a regex rather than `new URL()` — pg's connection-string parser is
+  // looser about special characters in passwords, so URL parsing can fail on
+  // DSNs that pg accepts. postgres[ql]://[user[:pw]@]host[:port]/...
+  const m = dsn.match(/^(?:postgres(?:ql)?:\/\/)?(?:[^@/]*@)?([^/?:\s]+)/);
+  return m?.[1] ?? "<unparseable>";
+}
+
 /**
  * Open a Postgres connection, transparently retrying through Xata's
  * scale-to-zero cold start. A pg.Client can only be connected once, so we
  * create a fresh one for every attempt.
  */
 async function createAndConnect(dsn: string): Promise<Client> {
-  const deadline = Date.now() + connectTimeoutMs();
+  const timeoutMs = connectTimeoutMs();
+  const deadline = Date.now() + timeoutMs;
+  const host = hostFromDsn(dsn);
   let attempt = 0;
   let lastError: unknown;
 
@@ -32,9 +73,17 @@ async function createAndConnect(dsn: string): Promise<Client> {
     });
     try {
       await client.connect();
+      if (attempt > 1) {
+        console.log(
+          `[branch-connect] ${host} ready after ${attempt} attempt(s)`,
+        );
+      }
       return client;
     } catch (err) {
       lastError = err;
+      console.error(
+        `[branch-connect] ${host} attempt ${attempt} failed: ${describeConnectError(err)}`,
+      );
       await client.end().catch(() => {});
       const remaining = deadline - Date.now();
       if (remaining <= 0) break;
@@ -43,9 +92,10 @@ async function createAndConnect(dsn: string): Promise<Client> {
     }
   }
 
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(String(lastError));
+  const detail = describeConnectError(lastError);
+  const message = `gave up after ${attempt} attempt(s) in ${timeoutMs}ms — ${detail}`;
+  console.error(`[branch-connect] ${host} ${message}`);
+  throw new Error(message);
 }
 
 function serializeRow(row: unknown[]): unknown[] {
@@ -135,6 +185,10 @@ export async function runQuery(
       detail?: string;
       position?: string;
     };
+    const codePart = e.code ? ` [${e.code}]` : "";
+    console.error(
+      `[query]${codePart} ${e.message ?? String(err)}`,
+    );
     return {
       ok: false,
       error: e.message ?? String(err),
