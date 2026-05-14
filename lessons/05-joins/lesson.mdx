@@ -1,0 +1,115 @@
+A join combines rows from two tables based on a relationship between them — usually a foreign key match. The seed has three tables: `users`, `orders` (with a `user_id` and a `category_id`), and `categories`. We'll wire them together.
+
+## INNER JOIN: rows on both sides match
+
+The default join. Returns one row per matching pair from the two tables; rows that don't match on either side are dropped.
+
+<Run>
+SELECT u.full_name, o.product, o.amount
+FROM orders o
+INNER JOIN users u ON u.id = o.user_id
+ORDER BY o.amount DESC;
+</Run>
+
+Two things going on:
+
+1. **Table aliases** (`o`, `u`) — short prefixes save typing once you reference the same column from multiple tables.
+2. **`ON u.id = o.user_id`** — the join condition. Almost always foreign-key equality, but it can be any boolean expression.
+
+Notice the result has 15 rows — exactly one per order, even though some users have multiple orders. The join *expands* the orders side, attaching the matching user to each.
+
+## Drop the `INNER` keyword
+
+`JOIN` on its own means `INNER JOIN`. Most code in the wild omits the `INNER`.
+
+<Run>
+SELECT u.full_name, o.product
+FROM orders o
+JOIN users u ON u.id = o.user_id
+LIMIT 5;
+</Run>
+
+## `USING` when the column names match
+
+When both sides use the same column name (here, the `id`/`user_id` mismatch wouldn't qualify, but it does for the `categories` join), `USING (col)` is shorter than `ON a.col = b.col`. It also collapses the two columns into one in the result.
+
+<Run>
+SELECT product, name AS category, amount
+FROM orders
+JOIN categories ON categories.id = orders.category_id
+LIMIT 5;
+</Run>
+
+That's the `ON` form. If the foreign-key column were named `id` on both sides (it's not here — `orders.category_id` vs `categories.id`), the `USING` form would be `JOIN categories USING (id)`. In practice you'll see `ON` more often because matching column names are rarer than you'd think.
+
+## LEFT JOIN: keep all rows from the left side
+
+`LEFT JOIN` keeps every row from the *left* table; the right side fills in NULLs when there's no match. This is the workhorse for "X with Y if any" queries.
+
+<Run>
+SELECT u.full_name, o.product
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+ORDER BY u.id, o.id;
+</Run>
+
+Look at the rows where `product` is NULL — those are users who haven't placed an order. With an INNER JOIN they'd be gone entirely.
+
+## "Find the orphans" pattern
+
+A `LEFT JOIN` with `WHERE right.col IS NULL` is the canonical way to find rows on the left with no match on the right.
+
+<Run>
+SELECT u.full_name, u.country
+FROM users u
+LEFT JOIN orders o ON o.user_id = u.id
+WHERE o.id IS NULL;
+</Run>
+
+These are users with zero orders. You'll reach for this pattern constantly — "customers who never bought", "products never sold", "tasks never assigned".
+
+## Joining three tables
+
+Same syntax, repeated. Each `JOIN` adds another table.
+
+<Run>
+SELECT u.full_name, c.name AS category, o.product, o.amount
+FROM orders o
+JOIN users u      ON u.id = o.user_id
+JOIN categories c ON c.id = o.category_id
+ORDER BY u.full_name, o.placed_at;
+</Run>
+
+The query reads naturally: start from `orders`, attach the user, attach the category.
+
+## Join + aggregate: per-group rollups
+
+Combine joins with `GROUP BY` from the previous lesson and you get per-something aggregates.
+
+<Run>
+SELECT
+  c.name AS category,
+  count(*)    AS orders,
+  sum(o.amount) AS revenue
+FROM orders o
+JOIN categories c ON c.id = o.category_id
+GROUP BY c.name
+ORDER BY revenue DESC;
+</Run>
+
+Revenue per category, in one query. This is the bread-and-butter of analytics work.
+
+## What you learned
+
+- `JOIN ... ON` to combine rows from two tables on a condition (usually a foreign key).
+- Table aliases (`FROM users u`) for compact, readable queries.
+- `INNER JOIN` (the default) drops unmatched rows on either side.
+- `LEFT JOIN` keeps all rows from the left, NULL-padding the right when there's no match.
+- `LEFT JOIN ... WHERE right.col IS NULL` finds orphans.
+- Chain `JOIN`s to bring in more tables, then `GROUP BY` to roll up.
+
+<Check id="seed-loaded">
+Mark this lesson done — we'll just confirm the sandbox is healthy.
+</Check>
+
+Up next: subqueries and Common Table Expressions (`WITH`) — composing queries from smaller queries.

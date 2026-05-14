@@ -1,0 +1,20 @@
+slug: 05-joins
+title: Joining tables
+summary: Pull rows from two or more tables — INNER and LEFT JOIN, ON vs USING.
+order: 5
+difficulty: beginner
+estimatedMinutes: 14
+tags:
+  - join
+  - inner-join
+  - left-join
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: seed-loaded
+    type: row-count
+    description: The seeded orders table has 15 rows — click to mark this lesson done.
+    table: orders
+    expect:
+      rowCount: 15
