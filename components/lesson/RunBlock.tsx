@@ -6,7 +6,9 @@ export function RunBlock({ children }: { children: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
 
   const onRun = () => {
-    const sql = preRef.current?.textContent?.trim();
+    // Collapse the multi-line, prose-friendly formatting in the rendered block
+    // down to a single line so the shell echoes it cleanly.
+    const sql = preRef.current?.textContent?.replace(/\s+/g, " ").trim();
     if (!sql) return;
     window.dispatchEvent(new CustomEvent("learn:run", { detail: { sql } }));
   };
