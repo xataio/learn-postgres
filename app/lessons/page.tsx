@@ -3,6 +3,7 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getAllLessons } from "@/lib/lessons";
 import { getProgressCounts } from "@/lib/lesson-progress";
+import { SignOutButton } from "@/components/SignOutButton";
 
 export const metadata = { title: "Lessons — Learn Postgres" };
 
@@ -30,13 +31,26 @@ export default async function LessonsCatalogPage() {
 
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
-      <h1 className="font-mono text-3xl font-semibold tracking-tight">
-        Lessons
-      </h1>
-      <p className="mt-2 text-sm text-zinc-500">
-        Short, hands-on Postgres exercises. Sign in to run them in your own
-        sandbox.
-      </p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="font-mono text-3xl font-semibold tracking-tight">
+            Lessons
+          </h1>
+          <p className="mt-2 text-sm text-zinc-500">
+            {session
+              ? "Short, hands-on Postgres exercises. Pick one to run in your sandbox."
+              : "Short, hands-on Postgres exercises. Sign in to run them in your own sandbox."}
+          </p>
+        </div>
+        {session && (
+          <div className="flex shrink-0 items-center gap-3 text-xs text-zinc-500">
+            <span className="hidden truncate sm:inline">
+              {session.user.name ?? session.user.email}
+            </span>
+            <SignOutButton />
+          </div>
+        )}
+      </div>
 
       {lessons.length === 0 ? (
         <div className="mt-10 rounded-md border border-dashed border-black/10 p-6 text-sm text-zinc-500 dark:border-white/10">
