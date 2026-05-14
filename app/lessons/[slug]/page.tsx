@@ -1,24 +1,16 @@
+import { Suspense } from "react";
 import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { auth } from "@/lib/auth";
-import { getAllLessons, getLesson, type Lesson } from "@/lib/lessons";
-import {
-  ensureBranchForLesson,
-  type UserBranchRow,
-} from "@/lib/branch-manager";
+import { getAllLessons, getLesson } from "@/lib/lessons";
 import { buildLessonComponents } from "@/components/lesson/mdx-components";
-import { BranchPanel } from "@/components/lesson/BranchPanel";
-import { SandboxPanel } from "@/components/lesson/SandboxPanel";
+import { SandboxSection } from "@/components/lesson/SandboxSection";
+import { SandboxLoading } from "@/components/lesson/SandboxLoading";
 import { getPassedCheckIds } from "@/lib/lesson-progress";
 
 type Params = { slug: string };
-
-type BranchState =
-  | { kind: "ready"; row: UserBranchRow }
-  | { kind: "unconfigured" }
-  | { kind: "error"; message: string };
 
 export async function generateStaticParams() {
   const lessons = await getAllLessons();
@@ -45,10 +37,7 @@ export default async function LessonPage({
   const lesson = await getLesson(slug);
   if (!lesson) notFound();
 
-  const [branch, passedCheckIds] = await Promise.all([
-    getBranchState(session.user.id, lesson),
-    getPassedCheckIds(session.user.id, slug),
-  ]);
+  const passedCheckIds = await getPassedCheckIds(session.user.id, slug);
   const components = buildLessonComponents({ lesson, passedCheckIds });
   const totalChecks = lesson.meta.checks.length;
   const passedCount = passedCheckIds.size;
@@ -88,44 +77,12 @@ export default async function LessonPage({
           <MDXRemote source={lesson.mdxSource} components={components} />
         </article>
 
-        <div
-          className={`flex flex-col gap-3 lg:sticky lg:top-6 lg:self-start ${
-            branch.kind === "ready" ? "lg:h-[calc(100dvh-3rem)]" : ""
-          }`}
-        >
-          {branch.kind !== "ready" ? (
-            <BranchPanel
-              {...(branch.kind === "unconfigured"
-                ? { kind: "unconfigured" as const }
-                : { kind: "error" as const, message: branch.message })}
-            />
-          ) : (
-            <SandboxPanel
-              lessonSlug={lesson.meta.slug}
-              branchName={branch.row.xataBranchName}
-            />
-          )}
+        <div className="flex flex-col gap-3 lg:sticky lg:top-6 lg:self-start lg:h-[calc(100dvh-3rem)]">
+          <Suspense fallback={<SandboxLoading />}>
+            <SandboxSection userId={session.user.id} lesson={lesson} />
+          </Suspense>
         </div>
       </div>
     </div>
   );
-}
-
-async function getBranchState(
-  userId: string,
-  lesson: Lesson,
-): Promise<BranchState> {
-  if (
-    !process.env.XATA_API_KEY ||
-    !process.env.XATA_ORG_ID ||
-    !process.env.XATA_PROJECT_ID
-  ) {
-    return { kind: "unconfigured" };
-  }
-  try {
-    const row = await ensureBranchForLesson(userId, lesson);
-    return { kind: "ready", row };
-  } catch (err) {
-    return { kind: "error", message: (err as Error).message };
-  }
 }
