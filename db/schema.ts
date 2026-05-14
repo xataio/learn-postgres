@@ -67,7 +67,9 @@ export const userBranch = pgTable(
       .notNull()
       .references(() => user.id, { onDelete: "cascade" }),
     lessonSlug: text("lesson_slug").notNull(),
+    xataBranchId: text("xata_branch_id").notNull(),
     xataBranchName: text("xata_branch_name").notNull(),
+    connectionString: text("connection_string").notNull(),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     lastUsedAt: timestamp("last_used_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),

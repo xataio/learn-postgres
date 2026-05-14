@@ -3,8 +3,13 @@ import { headers } from "next/headers";
 import { notFound, redirect } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { auth } from "@/lib/auth";
-import { getAllLessons, getLesson } from "@/lib/lessons";
+import { getAllLessons, getLesson, type Lesson } from "@/lib/lessons";
+import {
+  ensureBranchForLesson,
+  type UserBranchRow,
+} from "@/lib/branch-manager";
 import { buildLessonComponents } from "@/components/lesson/mdx-components";
+import { BranchPanel } from "@/components/lesson/BranchPanel";
 
 type Params = { slug: string };
 
@@ -33,6 +38,7 @@ export default async function LessonPage({
   const lesson = await getLesson(slug);
   if (!lesson) notFound();
 
+  const branchResult = await getBranchOrErrorState(session.user.id, lesson);
   const components = buildLessonComponents(lesson, "interactive");
 
   return (
@@ -59,17 +65,32 @@ export default async function LessonPage({
       </div>
 
       <aside className="lg:sticky lg:top-8 lg:self-start">
-        <div className="rounded-lg border border-black/10 p-4 dark:border-white/10">
-          <div className="text-xs font-medium uppercase tracking-wide text-zinc-500">
-            Your sandbox
-          </div>
-          <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
-            The interactive psql-like terminal lands in Phase 3. For now this is
-            the read-only lesson body — your dedicated Postgres branch will
-            appear here once the branch manager is wired up.
-          </p>
-        </div>
+        <BranchPanel {...branchResult} />
       </aside>
     </div>
   );
+}
+
+type BranchState =
+  | { kind: "ready"; lessonSlug: string; row: UserBranchRow }
+  | { kind: "unconfigured" }
+  | { kind: "error"; message: string };
+
+async function getBranchOrErrorState(
+  userId: string,
+  lesson: Lesson,
+): Promise<BranchState> {
+  if (
+    !process.env.XATA_API_KEY ||
+    !process.env.XATA_ORG_ID ||
+    !process.env.XATA_PROJECT_ID
+  ) {
+    return { kind: "unconfigured" };
+  }
+  try {
+    const row = await ensureBranchForLesson(userId, lesson);
+    return { kind: "ready", lessonSlug: lesson.meta.slug, row };
+  } catch (err) {
+    return { kind: "error", message: (err as Error).message };
+  }
 }

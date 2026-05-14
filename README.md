@@ -8,9 +8,15 @@ See [`PLAN.md`](./PLAN.md) for the full design.
 
 ## Status
 
-Phase 0 — skeleton with Next.js 16 App Router, Drizzle, and better-auth
-(email/password + GitHub). Lessons, branch manager, and the web shell land in
-later phases.
+Phases 0 – 2 are in. The web shell (Phase 3) and auto-checking (Phase 4) are
+the remaining big pieces.
+
+- **0** — Next.js 16 + Drizzle + better-auth (email/password + GitHub)
+- **1** — Lesson content pipeline (MDX + YAML + Zod, catalog, preview, contributor tooling)
+- **2** — Xata branch manager: per-(user, lesson) Postgres sandbox, seed runner, reset, idle-cleanup cron
+- **3** — Web shell (psql-like terminal) · *next*
+- **4** — Auto-checking
+- **5** — Polish
 
 ## Local setup
 
@@ -24,8 +30,9 @@ npm install
 
 # 2. Configure environment
 cp .env.example .env.local
-# edit .env.local — at minimum set DATABASE_URL and BETTER_AUTH_SECRET
-# (openssl rand -base64 32). GitHub OAuth is optional in dev.
+# Required for sign-in:  DATABASE_URL, BETTER_AUTH_SECRET (openssl rand -base64 32)
+# Required for sandbox:  XATA_API_KEY, XATA_ORG_ID, XATA_PROJECT_ID
+# Optional in dev:        GITHUB_CLIENT_ID/SECRET, CRON_SECRET
 
 # 3. Push the schema to your DB (creates the better-auth + app tables)
 npm run db:push
