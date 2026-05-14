@@ -126,10 +126,6 @@ export async function createBranch(input: {
       description: input.description,
       mode: "inherit",
       parentID: input.parentId,
-      // Keep learner branches awake — waking from scale-to-zero on a raw TCP
-      // connect doesn't reliably resume in time and gives ECONNREFUSED.
-      // The daily cleanup cron drops truly idle branches anyway.
-      scaleToZero: { enabled: false },
     }),
   });
 }
