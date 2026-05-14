@@ -17,6 +17,16 @@ const BANNER = [
   "",
 ].join("\r\n") + "\r\n";
 
+const TABLES_SQL = `
+SELECT c.relname
+FROM pg_class c
+JOIN pg_namespace n ON n.oid = c.relnamespace
+WHERE c.relkind IN ('r','v','m','p')
+  AND n.nspname NOT IN ('pg_catalog','information_schema')
+  AND n.nspname !~ '^pg_toast'
+ORDER BY 1
+`.trim();
+
 const THEME = {
   background: "#09090b",
   foreground: "#e4e4e7",
@@ -83,14 +93,52 @@ export function Terminal({ lessonSlug }: Props) {
 
       const write = (s: string) => term?.write(s);
 
+      let tablesCache: string[] = [];
+      let tablesFetchInFlight = false;
+      const refreshTables = () => {
+        if (tablesFetchInFlight) return;
+        tablesFetchInFlight = true;
+        fetch(`/api/lessons/${encodeURIComponent(lessonSlug)}/query`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ sql: TABLES_SQL }),
+        })
+          .then((r) => r.json())
+          .then((json: QueryResult) => {
+            if (json.ok) {
+              tablesCache =
+                json.results[0]?.rows.map((row) => String(row[0])) ?? [];
+            }
+          })
+          .catch(() => {
+            /* network blip — try again next Tab */
+          })
+          .finally(() => {
+            tablesFetchInFlight = false;
+          });
+      };
+
+      const completer = (prefix: string): string[] => {
+        if (tablesCache.length === 0) {
+          refreshTables();
+          return [];
+        }
+        const lower = prefix.toLowerCase();
+        return tablesCache.filter((t) => t.toLowerCase().startsWith(lower));
+      };
+
       const readline: Readline = new Readline(
         {
           write,
           onSubmit: (stmt: string) =>
-            handleSubmit(stmt, write, readline, lessonSlug),
+            handleSubmit(stmt, write, readline, lessonSlug, refreshTables),
         },
         loadHistory,
+        completer,
       );
+
+      // Warm the cache so the first Tab works without a silent miss.
+      refreshTables();
 
       write(BANNER);
       readline.start();
@@ -121,6 +169,8 @@ export function Terminal({ lessonSlug }: Props) {
         term?.clear();
         term?.write(BANNER);
         readline.promptAgain();
+        tablesCache = [];
+        refreshTables();
         term?.focus();
       };
       window.addEventListener("learn:clear-shell", clearHandler);
@@ -149,6 +199,7 @@ async function handleSubmit(
   write: (s: string) => void,
   readline: Readline,
   lessonSlug: string,
+  refreshTables: () => void,
 ): Promise<void> {
   const stmt = raw.trim();
   if (!stmt) {
@@ -184,6 +235,12 @@ async function handleSubmit(
   } finally {
     readline.setBusy(false);
     readline.promptAgain();
+  }
+
+  // A DDL statement might have created/dropped a table — refresh in the
+  // background so tab completion stays current.
+  if (/\b(create|drop|alter)\s+table\b/i.test(stmt)) {
+    refreshTables();
   }
 }
 
