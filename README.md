@@ -8,14 +8,13 @@ See [`PLAN.md`](./PLAN.md) for the full design.
 
 ## Status
 
-Phases 0 – 2 are in. The web shell (Phase 3) and auto-checking (Phase 4) are
-the remaining big pieces.
+Phases 0 – 3 are in. Auto-checking (Phase 4) is the remaining functional piece.
 
 - **0** — Next.js 16 + Drizzle + better-auth (email/password + GitHub)
 - **1** — Lesson content pipeline (MDX + YAML + Zod, catalog, preview, contributor tooling)
 - **2** — Xata branch manager: per-(user, lesson) Postgres sandbox, seed runner, reset, idle-cleanup cron
-- **3** — Web shell (psql-like terminal) · *next*
-- **4** — Auto-checking
+- **3** — Web shell: xterm.js + client-side readline, history, meta-commands, psql-style output
+- **4** — Auto-checking · *next*
 - **5** — Polish
 
 ## Local setup

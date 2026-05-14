@@ -3,7 +3,15 @@
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
 
-export function ResetButton({ lessonSlug }: { lessonSlug: string }) {
+type Variant = "compact" | "block";
+
+export function ResetButton({
+  lessonSlug,
+  variant = "compact",
+}: {
+  lessonSlug: string;
+  variant?: Variant;
+}) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
@@ -29,18 +37,25 @@ export function ResetButton({ lessonSlug }: { lessonSlug: string }) {
     startTransition(() => router.refresh());
   };
 
+  const baseCls =
+    "rounded-md border border-black/10 font-medium hover:bg-black/[.04] disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/[.04]";
+  const sizeCls =
+    variant === "compact"
+      ? "px-2 py-0.5 text-[11px]"
+      : "w-full px-3 py-1.5 text-xs";
+
   return (
-    <div>
+    <div className={variant === "compact" ? "shrink-0" : undefined}>
       <button
         type="button"
         onClick={onReset}
         disabled={pending}
-        className="w-full rounded-md border border-black/10 px-3 py-1.5 text-xs font-medium hover:bg-black/[.04] disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/[.04]"
+        className={`${baseCls} ${sizeCls}`}
       >
-        {pending ? "Resetting…" : "Reset sandbox"}
+        {pending ? "Resetting…" : "Reset"}
       </button>
       {error && (
-        <p className="mt-2 break-words text-xs text-rose-600">{error}</p>
+        <p className="mt-1 break-words text-[11px] text-rose-600">{error}</p>
       )}
     </div>
   );
