@@ -1,0 +1,120 @@
+So far every query returned one row per matching input row. Aggregate functions collapse a set of rows down to a single value — and combined with `GROUP BY`, they let you compute "one number per group".
+
+The seed has the familiar `users` table plus a new `orders` table (15 rows) with a `user_id`, `product`, and `amount`. We'll mostly aggregate over `orders`.
+
+## Aggregate functions
+
+The five you'll use most:
+
+- `count(*)` — number of rows
+- `count(col)` — number of rows where `col` is not NULL (subtle but important)
+- `sum(col)`, `avg(col)` — numeric totals and means
+- `min(col)`, `max(col)` — extremes (work on numbers, text, dates)
+
+<Run>
+SELECT
+  count(*)         AS total_orders,
+  sum(amount)      AS revenue,
+  avg(amount)::numeric(10, 2) AS avg_order,
+  min(amount)      AS smallest,
+  max(amount)      AS biggest
+FROM orders;
+</Run>
+
+The whole table collapsed into one row. `avg` returns extra precision by default — casting to `numeric(10, 2)` keeps it tidy.
+
+## `count(*)` vs `count(column)`
+
+This trips people up. `count(*)` counts rows. `count(column)` counts rows where that column is `not null` — handy when a column is sparsely populated.
+
+<Run>
+SELECT
+  count(*)        AS users_total,
+  count(country)  AS users_with_country
+FROM users;
+</Run>
+
+We updated the seed for this lesson, so this one happens to have all twelve filled in. Try it on the lesson 03 seed and you'll see ten of sixteen.
+
+## `GROUP BY`: one row per group
+
+Add `GROUP BY col` and the aggregate runs *per distinct value of `col`*.
+
+<Run>
+SELECT
+  user_id,
+  count(*)    AS orders,
+  sum(amount) AS spent
+FROM orders
+GROUP BY user_id
+ORDER BY spent DESC;
+</Run>
+
+You can group by multiple columns — the result is one row per distinct combination.
+
+<Run>
+SELECT
+  date_trunc('month', placed_at)::date AS month,
+  count(*) AS orders,
+  sum(amount) AS revenue
+FROM orders
+GROUP BY month
+ORDER BY month;
+</Run>
+
+`date_trunc('month', …)` rounds a timestamp down to the start of its month — a common building block for time-series rollups.
+
+## The "must appear in GROUP BY" rule
+
+Every column in the `SELECT` list must either be inside an aggregate **or** appear in the `GROUP BY`. Postgres will reject `SELECT user_id, product, sum(amount) FROM orders GROUP BY user_id` because `product` is neither aggregated nor grouped.
+
+The exception is when the un-grouped column is functionally dependent on a primary key that *is* in the group — Postgres is smart enough to allow that.
+
+## `HAVING`: filtering on aggregates
+
+`WHERE` filters rows *before* aggregation. To filter *after* — i.e. on the aggregate result — use `HAVING`.
+
+<Run>
+SELECT
+  user_id,
+  count(*)    AS orders,
+  sum(amount) AS spent
+FROM orders
+GROUP BY user_id
+HAVING sum(amount) > 50
+ORDER BY spent DESC;
+</Run>
+
+Mental model: `WHERE` thins out the input rows, `GROUP BY` rolls them up, `HAVING` thins out the resulting groups. Think of them in that exact order.
+
+## `WHERE` + `GROUP BY` + `HAVING` together
+
+A real reporting query usually combines all three.
+
+<Run>
+SELECT
+  user_id,
+  count(\*)    AS orders,
+  sum(amount) AS spent
+FROM orders
+WHERE placed_at >= '2024-04-01'
+GROUP BY user_id
+HAVING count(\*) >= 2
+ORDER BY spent DESC;
+</Run>
+
+Read top to bottom: keep orders from April onwards, group by user, keep groups with at least two orders, sort by spend.
+
+## What you learned
+
+- `count`, `sum`, `avg`, `min`, `max` — collapse rows into one value.
+- `count(*)` vs `count(col)` — the latter ignores NULLs.
+- `GROUP BY` — one row per distinct group; every selected column must be aggregated or grouped.
+- `date_trunc` for time-bucketed rollups.
+- `HAVING` filters groups; `WHERE` filters rows. Pipeline order matters.
+
+<Check id="seed-loaded">
+Mark this lesson done — we'll just confirm the sandbox is healthy.
+</Check>
+
+Up next: pulling rows from two tables at once with `JOIN`.
