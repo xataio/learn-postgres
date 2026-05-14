@@ -288,6 +288,20 @@ function isAuthError(err: unknown): boolean {
 }
 
 /**
+ * Strip the password from a DSN for logging — keeps host + user so we can
+ * tell whether Xata gave us the role we expected.
+ */
+function maskDsn(dsn: string): string {
+  try {
+    const url = new URL(dsn);
+    const user = url.username || "<no-user>";
+    return `${user}@${url.host}${url.pathname}`;
+  } catch {
+    return "<unparseable>";
+  }
+}
+
+/**
  * Ensure the calling user has a Postgres branch for this lesson. Creates +
  * seeds one the first time; subsequent calls reuse and refresh last_used_at.
  *
@@ -379,7 +393,7 @@ export async function ensureBranchForLesson(
     // lag on the compute node — drop the pool, wait briefly, retry once.
     if (isAuthError(err)) {
       console.warn(
-        `${tag} seed auth error for ${branch.id} ${connectionString} (${(err as Error).message}) — retrying once after short wait`,
+        `${tag} seed auth error for ${branch.id} dsn=${maskDsn(dsn)} (${(err as Error).message}) — retrying once after short wait`,
       );
       await dropPool(dsn).catch(() => { });
       await new Promise((r) => setTimeout(r, 2000));
@@ -387,7 +401,7 @@ export async function ensureBranchForLesson(
         await runSeed(dsn, lesson.seedSql);
       } catch (retryErr) {
         console.error(
-          `${tag} seed retry failed for ${branch.id}: ${(retryErr as Error).message}`,
+          `${tag} seed retry failed for ${branch.id} dsn=${maskDsn(dsn)}: ${(retryErr as Error).message}`,
         );
         await deleteBranch(branch.id).catch(() => { });
         throw new Error(

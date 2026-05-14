@@ -60,28 +60,49 @@ function evictOldest(): void {
 /**
  * The Neon driver pipes ws errors through as DOM `ErrorEvent` objects, where
  * the useful info is in `.error` (and sometimes `.message`/`.code` are blank).
- * Unwrap once so logs show the underlying Postgres/network error.
+ * Walk `.error` and `.cause` chains so logs show the root cause, and fall
+ * back to the first stack frame when the leaf has no message (e.g. undici
+ * `TypeError` from a terminated WebSocket).
  */
-function formatPoolError(err: unknown): string {
+function formatPoolError(err: unknown, depth = 0): string {
   if (err == null) return String(err);
   if (typeof err !== "object") return String(err);
+  if (depth > 4) return "<truncated>";
   const e = err as {
-    message?: string;
-    code?: string;
-    name?: string;
-    type?: string;
+    message?: unknown;
+    code?: unknown;
+    name?: unknown;
+    type?: unknown;
     error?: unknown;
+    cause?: unknown;
+    stack?: unknown;
   };
   if (e.error && e.error !== err) {
-    return `${e.type ?? "event"}: ${formatPoolError(e.error)}`;
+    const type = typeof e.type === "string" ? e.type : "event";
+    return `${type}: ${formatPoolError(e.error, depth + 1)}`;
   }
-  const parts = [e.name, e.message, e.code].filter(Boolean);
-  if (parts.length) return parts.join(" ");
-  try {
-    return JSON.stringify(err);
-  } catch {
-    return String(err);
+  const name = typeof e.name === "string" ? e.name : "";
+  const message = typeof e.message === "string" ? e.message : "";
+  const code = typeof e.code === "string" ? e.code : "";
+  let head = [name, message, code].filter(Boolean).join(" ");
+  if (!message && !code && typeof e.stack === "string") {
+    // Stack's first non-name line often hints at the origin (e.g. undici).
+    const firstFrame = e.stack
+      .split("\n")
+      .find((l) => l.trim().startsWith("at "));
+    if (firstFrame) head = `${head || "error"} (${firstFrame.trim()})`;
   }
+  if (!head) {
+    try {
+      head = JSON.stringify(err, Object.getOwnPropertyNames(err));
+    } catch {
+      head = String(err);
+    }
+  }
+  if (e.cause && e.cause !== err) {
+    return `${head} <- ${formatPoolError(e.cause, depth + 1)}`;
+  }
+  return head;
 }
 
 function getPool(dsn: string): Pool {
