@@ -42,6 +42,11 @@ export default async function LessonPage({
   const totalChecks = lesson.meta.checks.length;
   const passedCount = passedCheckIds.size;
 
+  const allLessons = await getAllLessons();
+  const idx = allLessons.findIndex((l) => l.meta.slug === slug);
+  const prev = idx > 0 ? allLessons[idx - 1] : null;
+  const next = idx >= 0 && idx < allLessons.length - 1 ? allLessons[idx + 1] : null;
+
   return (
     <div className="px-6 py-6">
       <div className="text-xs text-zinc-500">
@@ -75,6 +80,40 @@ export default async function LessonPage({
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <article className="prose prose-zinc dark:prose-invert">
           <MDXRemote source={lesson.mdxSource} components={components} />
+
+          {(prev || next) && (
+            <nav
+              aria-label="Lesson navigation"
+              className="not-prose mt-10 flex items-stretch justify-between gap-3 border-t border-black/10 pt-6 dark:border-white/10"
+            >
+              {prev ? (
+                <Link
+                  href={`/lessons/${prev.meta.slug}`}
+                  className="group flex flex-1 flex-col items-start gap-0.5 rounded-md border border-black/10 px-3 py-2 text-left text-sm hover:border-black/20 hover:bg-black/[.03] dark:border-white/10 dark:hover:border-white/20 dark:hover:bg-white/[.04]"
+                >
+                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                    ← Previous
+                  </span>
+                  <span className="font-medium">{prev.meta.title}</span>
+                </Link>
+              ) : (
+                <span className="flex-1" />
+              )}
+              {next ? (
+                <Link
+                  href={`/lessons/${next.meta.slug}`}
+                  className="group flex flex-1 flex-col items-end gap-0.5 rounded-md border border-black/10 px-3 py-2 text-right text-sm hover:border-black/20 hover:bg-black/[.03] dark:border-white/10 dark:hover:border-white/20 dark:hover:bg-white/[.04]"
+                >
+                  <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                    Next →
+                  </span>
+                  <span className="font-medium">{next.meta.title}</span>
+                </Link>
+              ) : (
+                <span className="flex-1" />
+              )}
+            </nav>
+          )}
         </article>
 
         <div className="flex flex-col gap-3 lg:sticky lg:top-6 lg:self-start lg:h-[calc(100dvh-3rem)]">
