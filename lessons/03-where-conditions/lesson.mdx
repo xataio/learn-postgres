@@ -1,0 +1,106 @@
+Lesson 01 used `WHERE col = value` and stopped there. The real power of `WHERE` is the predicate vocabulary on the right-hand side. This lesson is a tour of the operators you'll reach for every day.
+
+The seed loaded a `users` table similar to before, plus a nullable `country` column and a few extra people — sixteen rows in total.
+
+## Comparisons beyond `=`
+
+The usual suspects work how you'd expect: `<`, `<=`, `>`, `>=`, `<>` (or `!=`).
+
+<Run>
+SELECT full_name, signed_up_at
+FROM users
+WHERE signed_up_at >= '2024-06-01';
+</Run>
+
+`<>` and `!=` are interchangeable in Postgres, but the SQL standard spells it `<>`. Pick one and stay consistent.
+
+## Combine predicates with `AND` / `OR`
+
+`AND` binds tighter than `OR`, just like `*` binds tighter than `+` in arithmetic. When in doubt, parenthesize.
+
+<Run>
+SELECT full_name, country, is_active
+FROM users
+WHERE is_active = true
+  AND (country = 'US' OR country = 'UK');
+</Run>
+
+Without those parentheses, the query reads as `is_active = true AND country = 'US'` *or* `country = 'UK'` — which would happily include inactive UK users. Parentheses are documentation as much as logic.
+
+## `IN` is a friendlier OR
+
+When you'd be `OR`-ing the same column against a list of values, `IN` is cleaner.
+
+<Run>
+SELECT full_name, country
+FROM users
+WHERE country IN ('US', 'UK', 'NL');
+</Run>
+
+`NOT IN` is the inverse — but be careful with NULLs in the list, you'll see why in a moment.
+
+## `BETWEEN` for ranges
+
+`x BETWEEN a AND b` is shorthand for `x >= a AND x <= b` — both endpoints are *inclusive*.
+
+<Run>
+SELECT full_name, signed_up_at
+FROM users
+WHERE signed_up_at BETWEEN '2024-04-01' AND '2024-05-31';
+</Run>
+
+For dates and timestamps this is usually what you want. For floats, be aware the upper bound is inclusive — sometimes you want `>= a AND < b` instead, especially if `b` represents "the next bucket".
+
+## `LIKE` for pattern matching
+
+`%` matches zero or more characters; `_` matches exactly one. Patterns are case-sensitive — use `ILIKE` for case-insensitive.
+
+<Run>
+SELECT full_name, email
+FROM users
+WHERE full_name LIKE '%Hopper%'
+   OR email ILIKE 'a%@example.com';
+</Run>
+
+Patterns starting with `%` can't use a regular B-tree index — if you need that and the table is big, look at trigram (`pg_trgm`) indexes later.
+
+## `IS NULL` is not `= NULL`
+
+This is the single biggest gotcha for SQL beginners. `NULL` represents *unknown*, and *unknown = unknown* is itself unknown — not `true`. So `country = NULL` matches nothing, ever. You have to use `IS NULL` and `IS NOT NULL`.
+
+<Run>
+SELECT full_name, country
+FROM users
+WHERE country IS NULL;
+</Run>
+
+Same trap with `NOT IN`: if the list contains a `NULL`, the whole predicate becomes unknown and you get zero rows back. Sanitize your lists or prefer `NOT EXISTS` for that pattern.
+
+## Putting it together
+
+A realistic predicate is usually a small mix of these.
+
+<Run>
+SELECT full_name, country, signed_up_at
+FROM users
+WHERE is_active = true
+  AND country IS NOT NULL
+  AND signed_up_at >= '2024-04-01'
+  AND email NOT LIKE '%@spam.example.com'
+ORDER BY signed_up_at;
+</Run>
+
+## What you learned
+
+- Comparisons (`<`, `>=`, `<>`) and how they read in SQL.
+- `AND`/`OR` precedence — parenthesize when mixing.
+- `IN` as readable shorthand for chained `OR`s.
+- `BETWEEN` is inclusive on both ends.
+- `LIKE` (case-sensitive) vs `ILIKE`; `%` and `_` wildcards.
+- `IS NULL` / `IS NOT NULL` — never `= NULL`.
+
+<Check id="seed-loaded">
+Mark this lesson done — we'll just confirm the sandbox is healthy.
+</Check>
+
+Up next: aggregating rows together with `GROUP BY`.
