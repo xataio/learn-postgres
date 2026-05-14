@@ -10,8 +10,7 @@ import {
 } from "@/lib/branch-manager";
 import { buildLessonComponents } from "@/components/lesson/mdx-components";
 import { BranchPanel } from "@/components/lesson/BranchPanel";
-import { ResetButton } from "@/components/lesson/ResetButton";
-import { Terminal } from "@/components/shell/Terminal";
+import { SandboxPanel } from "@/components/lesson/SandboxPanel";
 
 type Params = { slug: string };
 
@@ -82,23 +81,10 @@ export default async function LessonPage({
                 : { kind: "error" as const, message: branch.message })}
             />
           ) : (
-            <>
-              <div className="flex items-center justify-between gap-3 rounded-lg border border-black/10 bg-zinc-50 px-3 py-2 text-xs dark:border-white/10 dark:bg-zinc-900/40">
-                <span className="flex min-w-0 items-center gap-2 text-zinc-500">
-                  <span
-                    aria-hidden
-                    className="inline-block h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-500"
-                  />
-                  <span className="truncate font-mono text-zinc-700 dark:text-zinc-300">
-                    {branch.row.xataBranchName}
-                  </span>
-                </span>
-                <ResetButton lessonSlug={lesson.meta.slug} />
-              </div>
-              <div className="h-[60dvh] min-h-[320px] lg:h-auto lg:flex-1 lg:min-h-0">
-                <Terminal lessonSlug={lesson.meta.slug} />
-              </div>
-            </>
+            <SandboxPanel
+              lessonSlug={lesson.meta.slug}
+              branchName={branch.row.xataBranchName}
+            />
           )}
         </div>
       </div>
