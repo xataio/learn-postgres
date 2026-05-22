@@ -8,8 +8,9 @@ set -euo pipefail
 
 # Re-export the runtime env var names under the names the Xata CLI expects,
 # so the same secrets configured for the app also drive the CLI here.
-export XATA_ORGANIZATIONID="${XATA_ORGANIZATIONID:-${XATA_ORG_ID:-}}"
-export XATA_PROJECTID="${XATA_PROJECTID:-${XATA_PROJECT_ID:-}}"
+export XATA_ORGANIZATIONID="${XATA_ORG_ID}"
+export XATA_PROJECTID="${XATA_MAIN_PROJECT_ID}"
+export XATA_API_KEY="${XATA_VERCEL_API_KEY}"
 
 if ! command -v xata >/dev/null 2>&1; then
   curl -fsSL https://xata.io/install.sh | bash
