@@ -70,6 +70,10 @@ export const userBranch = pgTable(
     xataBranchId: text("xata_branch_id").notNull(),
     xataBranchName: text("xata_branch_name").notNull(),
     connectionString: text("connection_string").notNull(),
+    // Template branch this sandbox was forked from, when one existed. Null for
+    // branches forked from `main` via the on-demand-seed fallback. Lets the
+    // cleanup cron tell which stale templates are safe to prune.
+    templateBranchId: text("template_branch_id"),
     createdAt: timestamp("created_at").notNull().defaultNow(),
     lastUsedAt: timestamp("last_used_at").notNull().defaultNow(),
     completedAt: timestamp("completed_at"),

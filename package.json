@@ -13,6 +13,7 @@
     "db:push": "drizzle-kit push",
     "db:studio": "drizzle-kit studio",
     "lessons:validate": "tsx scripts/validate-lessons.ts",
+    "templates:prepare": "tsx scripts/prepare-templates.ts",
     "new-lesson": "tsx scripts/new-lesson.ts"
   },
   "dependencies": {

@@ -1,0 +1,1 @@
+ALTER TABLE "user_branch" ADD COLUMN "template_branch_id" text;
