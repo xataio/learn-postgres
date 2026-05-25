@@ -7,15 +7,19 @@
 set -euox pipefail
 
 if [[ "${VERCEL_ENV:-}" == "preview" && -n "${VERCEL_GIT_COMMIT_REF:-}" ]]; then
-  # The CLI reads XATA_API_KEY directly from the env; org/project come in via flags.
-  export XATA_API_KEY="$XATA_VERCEL_API_KEY"
+  # Create a main DB branch for the preview deployment
+  # Wrap xata CLI so we can inject the API key for this, without changing the XATA_API_KEY we use
+  # for sandbox template seeding 
+  xata_cli() {
+    XATA_API_KEY="$XATA_VERCEL_API_KEY" xata "$@"
+  }
 
   if ! command -v xata >/dev/null 2>&1; then
     curl -fsSL https://xata.io/install.sh | bash
     export PATH="$HOME/.config/xata/bin:$PATH"
   fi
 
-  xata version
+  xata_cli version
 
   # Sanitize the git ref into a legal Xata branch name (cap at 50 chars so
   # the "preview-" prefix still leaves room under Xata's 63-char limit).
@@ -26,11 +30,11 @@ if [[ "${VERCEL_ENV:-}" == "preview" && -n "${VERCEL_GIT_COMMIT_REF:-}" ]]; then
 
   # Recreate from scratch on every push so the preview reflects the PR's
   # current schema + seed without drift across rebuilds.
-  xata branch delete "$BRANCH_NAME" "${XATA_FLAGS[@]}" --yes || true
-  xata branch create --name "$BRANCH_NAME" "${XATA_FLAGS[@]}" --parent-branch $XATA_MAIN_BRANCH_ID
-  xata branch wait-ready "$BRANCH_NAME" "${XATA_FLAGS[@]}"
+  xata_cli branch delete "$BRANCH_NAME" "${XATA_FLAGS[@]}" --yes || true
+  xata_cli branch create --name "$BRANCH_NAME" "${XATA_FLAGS[@]}" --parent-branch $XATA_MAIN_BRANCH_ID
+  xata_cli branch wait-ready "$BRANCH_NAME" "${XATA_FLAGS[@]}"
 
-  DSN=$(xata branch url "$BRANCH_NAME" --type primary "${XATA_FLAGS[@]}")
+  DSN=$(xata_cli branch url "$BRANCH_NAME" --type primary "${XATA_FLAGS[@]}")
   echo "DATABASE_URL=$DSN" >> .env.production
 
   DATABASE_URL="$DSN" npm run db:migrate
