@@ -1,20 +1,20 @@
 import "server-only";
 import { createHash } from "node:crypto";
-import { and, asc, eq, lt } from "drizzle-orm";
+import { and, asc, eq, isNotNull, lt } from "drizzle-orm";
 import { db } from "@/lib/db";
 import { userBranch } from "@/db/schema";
-import type { Lesson } from "@/lib/lessons";
+import { getAllLessons, type Lesson } from "@/lib/lessons";
 import {
   XataApiError,
-  buildBranchDsn,
+  awaitConnectionString,
   createBranch,
   deleteBranch,
-  getBranch,
-  getCredentials,
   getParentBranchId,
-  readCredentialsFromDsn,
-  rotateCredentials,
+  getTemplateBranchId,
+  listBranches,
+  resolveBranchDsn,
 } from "@/lib/xata";
+import { templateBranchName } from "@/lib/templates";
 import { acquireClient, dropPool } from "@/lib/shell/pool-cache";
 import { enforceRate } from "@/lib/rate-limit";
 
@@ -163,48 +163,6 @@ async function healMissingConnectionString(
   return updated;
 }
 
-/**
- * After a successful create-branch call, Xata sometimes still returns a null
- * `connectionString` because the branch is still being provisioned. Poll the
- * branch details with backoff until it's populated.
- */
-async function awaitConnectionString(
-  branchId: string,
-  initial: string | null | undefined,
-  timeoutMs = 60_000,
-): Promise<string> {
-  if (initial) return initial;
-
-  const deadline = Date.now() + timeoutMs;
-  let attempt = 0;
-  while (Date.now() < deadline) {
-    attempt++;
-    const remaining = deadline - Date.now();
-    const wait = Math.min(500 + 500 * attempt, 3000, remaining);
-    await new Promise((r) => setTimeout(r, wait));
-    let updated;
-    try {
-      updated = await getBranch(branchId);
-    } catch (err) {
-      console.error(
-        `[branch-create] poll attempt ${attempt} for ${branchId} failed: ${(err as Error).message}`,
-      );
-      continue;
-    }
-    if (updated.connectionString) {
-      if (attempt > 1) {
-        console.log(
-          `[branch-create] ${branchId} connection string ready after ${attempt} poll(s)`,
-        );
-      }
-      return updated.connectionString;
-    }
-  }
-  throw new Error(
-    `Xata never returned a connection string for branch ${branchId} (timed out after ${timeoutMs}ms)`,
-  );
-}
-
 async function findExisting(
   userId: string,
   lessonSlug: string,
@@ -232,34 +190,6 @@ async function touchLastUsed(userId: string, lessonSlug: string) {
         eq(userBranch.lessonSlug, lessonSlug),
       ),
     );
-}
-
-/**
- * Resolve a usable Postgres DSN for a freshly-created Xata branch.
- *
- * Xata's create-branch response sometimes already embeds credentials in
- * `connectionString`; when it doesn't, we have to fetch them from the
- * credentials endpoint. If that endpoint 400s (Xata hasn't issued credentials
- * for this role yet), trigger a rotate and try once more.
- */
-async function resolveBranchDsn(
-  branchId: string,
-  connectionString: string,
-): Promise<string> {
-  const inline = readCredentialsFromDsn(connectionString);
-  if (inline) return connectionString;
-
-  try {
-    const creds = await getCredentials(branchId);
-    return buildBranchDsn(connectionString, creds);
-  } catch (err) {
-    if (err instanceof XataApiError && err.status === 400) {
-      await rotateCredentials(branchId);
-      const creds = await getCredentials(branchId);
-      return buildBranchDsn(connectionString, creds);
-    }
-    throw err;
-  }
 }
 
 /**
@@ -371,8 +301,11 @@ function maskDsn(dsn: string): string {
 }
 
 /**
- * Ensure the calling user has a Postgres branch for this lesson. Creates +
- * seeds one the first time; subsequent calls reuse and refresh last_used_at.
+ * Ensure the calling user has a Postgres branch for this lesson. The first time,
+ * it forks from the lesson's pre-seeded template branch (deploy-prepared) and
+ * skips seeding entirely; if no template exists (e.g. local dev), it falls back
+ * to forking from `main` and running the seed on demand. Subsequent calls reuse
+ * the branch and refresh last_used_at.
  *
  * Throws if Xata isn't configured or seed/create fails.
  */
@@ -415,7 +348,14 @@ export async function ensureBranchForLesson(
 
   await enforceBranchQuota(userId);
 
-  const parentId = await getParentBranchId();
+  // Prefer forking from the lesson's pre-seeded template (data inherited at
+  // fork time — no per-request seeding). Fall back to forking from `main` and
+  // seeding on demand when the template is missing (local dev, prep not run).
+  const templateName = templateBranchName(lesson.meta.slug, lesson.seedSql);
+  const templateId = await getTemplateBranchId(templateName);
+  const parentId = templateId ?? (await getParentBranchId());
+  const skipSeed = templateId !== null;
+
   const name = buildBranchName(userId, lesson.meta.slug);
   let branch;
   try {
@@ -428,7 +368,11 @@ export async function ensureBranchForLesson(
     console.error(`${tag} create-branch failed: ${(err as Error).message}`);
     throw err;
   }
-  console.log(`${tag} created branch ${branch.id} (${branch.name})`);
+  console.log(
+    `${tag} created branch ${branch.id} (${branch.name}) from ${
+      skipSeed ? `template ${templateName}` : "main"
+    }`,
+  );
 
   let connectionString: string;
   try {
@@ -455,16 +399,18 @@ export async function ensureBranchForLesson(
     throw err;
   }
 
-  try {
-    await runSeed(dsn, lesson.seedSql);
-  } catch (err) {
-    console.error(
-      `${tag} seed failed for ${branch.id} dsn=${maskDsn(dsn)}: ${(err as Error).message}`,
-    );
-    await deleteBranch(branch.id).catch(() => { });
-    throw new Error(
-      `Seed for ${lesson.meta.slug} failed: ${(err as Error).message}`,
-    );
+  if (!skipSeed) {
+    try {
+      await runSeed(dsn, lesson.seedSql);
+    } catch (err) {
+      console.error(
+        `${tag} seed failed for ${branch.id} dsn=${maskDsn(dsn)}: ${(err as Error).message}`,
+      );
+      await deleteBranch(branch.id).catch(() => { });
+      throw new Error(
+        `Seed for ${lesson.meta.slug} failed: ${(err as Error).message}`,
+      );
+    }
   }
 
   try {
@@ -476,6 +422,7 @@ export async function ensureBranchForLesson(
         xataBranchId: branch.id,
         xataBranchName: branch.name,
         connectionString: dsn,
+        templateBranchId: templateId,
       })
       .returning();
     return row;
@@ -526,10 +473,56 @@ export type CleanupResult = {
   scanned: number;
   dropped: number;
   errors: { branchId: string; message: string }[];
+  templates: { scanned: number; dropped: number };
 };
 
 /**
- * Cron-driven cleanup: drop branches that haven't been touched in `idleDays`.
+ * Delete stale template branches: any `tpl-*` branch that is neither a current
+ * lesson template (recomputed from the lessons on disk) nor still referenced by
+ * a live `userBranch`. Safe regardless of whether Xata forks are full copies or
+ * copy-on-write, since referenced templates are never removed.
+ */
+async function pruneStaleTemplates(
+  errors: { branchId: string; message: string }[],
+): Promise<{ scanned: number; dropped: number }> {
+  const lessons = await getAllLessons();
+  // Defensive: if we can't see any lessons, don't treat every template as
+  // stale — that would delete current templates that simply have no live
+  // sandboxes yet. Bail out of pruning instead.
+  if (lessons.length === 0) return { scanned: 0, dropped: 0 };
+  const current = new Set(
+    lessons.map((l) => templateBranchName(l.meta.slug, l.seedSql)),
+  );
+
+  const referencedRows = await db
+    .selectDistinct({ id: userBranch.templateBranchId })
+    .from(userBranch)
+    .where(isNotNull(userBranch.templateBranchId));
+  const referenced = new Set(
+    referencedRows.map((r) => r.id).filter((id): id is string => id !== null),
+  );
+
+  const templates = (await listBranches()).filter((b) =>
+    b.name.startsWith("tpl-"),
+  );
+
+  let dropped = 0;
+  for (const b of templates) {
+    if (current.has(b.name) || referenced.has(b.id)) continue;
+    try {
+      await deleteBranch(b.id);
+      dropped++;
+    } catch (err) {
+      errors.push({ branchId: b.id, message: (err as Error).message });
+    }
+  }
+  return { scanned: templates.length, dropped };
+}
+
+/**
+ * Cron-driven cleanup: drop user branches that haven't been touched in
+ * `idleDays`, then prune template branches no longer referenced by any lesson
+ * or live user branch.
  */
 export async function cleanupIdleBranches(
   idleDays = 7,
@@ -544,6 +537,7 @@ export async function cleanupIdleBranches(
     scanned: idle.length,
     dropped: 0,
     errors: [],
+    templates: { scanned: 0, dropped: 0 },
   };
 
   for (const row of idle) {
@@ -565,6 +559,15 @@ export async function cleanupIdleBranches(
         message: (err as Error).message,
       });
     }
+  }
+
+  try {
+    result.templates = await pruneStaleTemplates(result.errors);
+  } catch (err) {
+    result.errors.push({
+      branchId: "<template-prune>",
+      message: (err as Error).message,
+    });
   }
 
   return result;

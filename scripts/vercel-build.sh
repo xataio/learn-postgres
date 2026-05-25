@@ -36,4 +36,10 @@ if [[ "${VERCEL_ENV:-}" == "preview" && -n "${VERCEL_GIT_COMMIT_REF:-}" ]]; then
   DATABASE_URL="$DSN" npm run db:migrate
 fi
 
+# Pre-seed per-lesson template branches in the sandbox project so user sandboxes
+# fork from them instead of seeding per request. Runs for both prod and preview.
+# Fatal by design (set -e): never ship a lesson without its template. Requires
+# XATA_API_KEY / XATA_ORG_ID / XATA_PROJECT_ID (the sandbox project) in the env.
+npm run templates:prepare
+
 npm run build
