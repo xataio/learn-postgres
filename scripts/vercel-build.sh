@@ -6,17 +6,17 @@
 
 set -euo pipefail
 
-# The CLI reads XATA_API_KEY directly from the env; org/project come in via flags.
-export XATA_API_KEY="$XATA_VERCEL_API_KEY"
-
-if ! command -v xata >/dev/null 2>&1; then
-  curl -fsSL https://xata.io/install.sh | bash
-  export PATH="$HOME/.config/xata/bin:$PATH"
-fi
-
-xata version
-
 if [[ "${VERCEL_ENV:-}" == "preview" && -n "${VERCEL_GIT_COMMIT_REF:-}" ]]; then
+  # The CLI reads XATA_API_KEY directly from the env; org/project come in via flags.
+  export XATA_API_KEY="$XATA_VERCEL_API_KEY"
+
+  if ! command -v xata >/dev/null 2>&1; then
+    curl -fsSL https://xata.io/install.sh | bash
+    export PATH="$HOME/.config/xata/bin:$PATH"
+  fi
+
+  xata version
+
   # Sanitize the git ref into a legal Xata branch name (cap at 50 chars so
   # the "preview-" prefix still leaves room under Xata's 63-char limit).
   SAFE_REF=$(echo -n "$VERCEL_GIT_COMMIT_REF" | tr -c 'a-zA-Z0-9-_' '-' | cut -c1-50)
