@@ -1,16 +1,15 @@
-import {
-  ensureBranchForLesson,
-  type UserBranchRow,
-} from "@/lib/branch-manager";
+import { getReadyBranch } from "@/lib/branch-manager";
 import type { Lesson } from "@/lib/lessons";
 import { BranchPanel } from "./BranchPanel";
+import { SandboxBootstrap } from "./SandboxBootstrap";
 import { SandboxPanel } from "./SandboxPanel";
 
 /**
- * Server component that does the slow Xata work for a lesson sandbox. Rendered
- * inside a <Suspense> boundary so the prose can stream first. We catch the
- * error here (instead of bubbling to a route-level error boundary) so that
- * the rest of the lesson stays readable when Xata is unhappy.
+ * Server component for a lesson sandbox. It only does the *fast* work — check
+ * whether a ready branch already exists — so it can stream in quickly behind
+ * its <Suspense> boundary. If a branch is ready, the interactive panel renders
+ * immediately. Otherwise it hands off to the client bootstrapper, which drives
+ * the streaming /prepare endpoint and shows the branching/seeding stages live.
  */
 export async function SandboxSection({
   userId,
@@ -27,16 +26,21 @@ export async function SandboxSection({
     return <BranchPanel kind="unconfigured" />;
   }
 
-  let row: UserBranchRow;
+  let ready;
   try {
-    row = await ensureBranchForLesson(userId, lesson);
+    ready = await getReadyBranch(userId, lesson.meta.slug);
   } catch (err) {
     return <BranchPanel kind="error" message={(err as Error).message} />;
   }
-  return (
-    <SandboxPanel
-      lessonSlug={lesson.meta.slug}
-      branchName={row.xataBranchName}
-    />
-  );
+
+  if (ready) {
+    return (
+      <SandboxPanel
+        lessonSlug={lesson.meta.slug}
+        branchName={ready.xataBranchName}
+      />
+    );
+  }
+
+  return <SandboxBootstrap lessonSlug={lesson.meta.slug} />;
 }

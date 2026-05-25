@@ -16,7 +16,7 @@ export function SandboxLoading() {
         <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg border border-black/10 bg-zinc-950/60 backdrop-blur-[2px] dark:border-white/10">
           <div className="flex items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 shadow-lg">
             <Spinner />
-            <span>Forking a fresh Postgres branch…</span>
+            <span>Loading sandbox…</span>
           </div>
         </div>
       </div>

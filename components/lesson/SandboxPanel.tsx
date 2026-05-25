@@ -1,8 +1,10 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useTransition } from "react";
 import { useRouter } from "next/navigation";
 import { Terminal } from "@/components/shell/Terminal";
+import { usePrepareStream } from "./usePrepareStream";
+import { SandboxPrepProgress } from "./SandboxPrepProgress";
 
 type Props = {
   lessonSlug: string;
@@ -11,39 +13,24 @@ type Props = {
 
 export function SandboxPanel({ lessonSlug, branchName }: Props) {
   const router = useRouter();
-  const [fetching, setFetching] = useState(false);
+  const { phase, error, run, clear } = usePrepareStream(lessonSlug);
   const [isPending, startTransition] = useTransition();
-  const [error, setError] = useState<string | null>(null);
 
-  // fetching: the POST is in flight.
-  // isPending: router.refresh() is re-rendering the server tree.
-  // Either way the user sees the busy state.
-  const busy = fetching || isPending;
+  // While the stream runs, `phase` is set (branching/seeding/ready). Once it's
+  // ready we clear it and hand off to isPending, which stays true until the
+  // refreshed RSC payload — with the new branch — has rendered.
+  const streaming = phase !== null && phase !== "error";
+  const busy = streaming || isPending;
 
   const onClearShell = () => {
     window.dispatchEvent(new CustomEvent("learn:clear-shell"));
   };
 
   const onReset = async () => {
-    setError(null);
-    setFetching(true);
-    try {
-      const res = await fetch(
-        `/api/lessons/${encodeURIComponent(lessonSlug)}/reset`,
-        { method: "POST" },
-      );
-      if (!res.ok) {
-        const body = await res.json().catch(() => ({}));
-        setError(body.error ?? `Reset failed (${res.status})`);
-        return;
-      }
-      // Hand off the busy state to isPending so the spinner stays up until
-      // the refreshed RSC payload has rendered.
+    const res = await run({ reset: true });
+    if (res.ok) {
+      clear();
       startTransition(() => router.refresh());
-    } catch (err) {
-      setError((err as Error).message);
-    } finally {
-      setFetching(false);
     }
   };
 
@@ -89,9 +76,15 @@ export function SandboxPanel({ lessonSlug, branchName }: Props) {
         <Terminal key={branchName} lessonSlug={lessonSlug} />
         {busy && (
           <div className="pointer-events-auto absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-zinc-950/60 backdrop-blur-[2px]">
-            <div className="flex items-center gap-2 rounded-md border border-white/10 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 shadow-lg">
-              <Spinner />
-              <span>Resetting sandbox…</span>
+            <div className="rounded-md border border-white/10 bg-zinc-900 px-4 py-3 text-sm text-zinc-100 shadow-lg">
+              {streaming ? (
+                <SandboxPrepProgress phase={phase ?? "branching"} />
+              ) : (
+                <span className="flex items-center gap-2">
+                  <Spinner />
+                  Resetting sandbox…
+                </span>
+              )}
             </div>
           </div>
         )}

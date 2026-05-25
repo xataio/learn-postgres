@@ -20,6 +20,15 @@ import { enforceRate } from "@/lib/rate-limit";
 
 export type UserBranchRow = typeof userBranch.$inferSelect;
 
+/**
+ * The two user-visible stages of preparing a fresh branch. `branching` covers
+ * provisioning the Xata branch and waiting for its connection string;
+ * `seeding` covers running the lesson's seed SQL. Reported via the optional
+ * `onPhase` callback so the UI can show what's happening behind the scenes.
+ */
+export type BranchPhase = "branching" | "seeding";
+type PhaseCallback = (phase: BranchPhase) => void;
+
 const XATA_NAME_MAX = 63;
 const DEFAULT_MAX_BRANCHES_PER_USER = 5;
 const DEFAULT_BRANCH_CREATE_LIMIT = 5;
@@ -379,6 +388,7 @@ function maskDsn(dsn: string): string {
 export async function ensureBranchForLesson(
   userId: string,
   lesson: Lesson,
+  onPhase?: PhaseCallback,
 ): Promise<UserBranchRow> {
   let existing = await findExisting(userId, lesson.meta.slug);
 
@@ -415,6 +425,7 @@ export async function ensureBranchForLesson(
 
   await enforceBranchQuota(userId);
 
+  onPhase?.("branching");
   const parentId = await getParentBranchId();
   const name = buildBranchName(userId, lesson.meta.slug);
   let branch;
@@ -455,6 +466,7 @@ export async function ensureBranchForLesson(
     throw err;
   }
 
+  onPhase?.("seeding");
   try {
     await runSeed(dsn, lesson.seedSql);
   } catch (err) {
@@ -517,9 +529,28 @@ export async function dropBranchForLesson(
 export async function resetBranchForLesson(
   userId: string,
   lesson: Lesson,
+  onPhase?: PhaseCallback,
 ): Promise<UserBranchRow> {
   await dropBranchForLesson(userId, lesson.meta.slug);
-  return ensureBranchForLesson(userId, lesson);
+  return ensureBranchForLesson(userId, lesson, onPhase);
+}
+
+/**
+ * Return the user's branch for a lesson only if it's fully ready to use (has a
+ * connection string). Used by the server component to decide whether to render
+ * the interactive panel immediately or hand off to the client bootstrapper
+ * that creates + seeds a fresh branch with live progress. Returns null for a
+ * missing or half-provisioned row, so the bootstrap path (which heals or
+ * recreates via ensureBranchForLesson) takes over.
+ */
+export async function getReadyBranch(
+  userId: string,
+  lessonSlug: string,
+): Promise<UserBranchRow | null> {
+  const row = await findExisting(userId, lessonSlug);
+  if (!row || !row.connectionString) return null;
+  await touchLastUsed(userId, lessonSlug);
+  return row;
 }
 
 export type CleanupResult = {
