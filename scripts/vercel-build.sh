@@ -4,7 +4,7 @@
 # Production builds (main) fall through to a plain `next build` that reads the
 # DATABASE_URL configured in the Vercel project.
 
-set -euo pipefail
+set -euox pipefail
 
 if [[ "${VERCEL_ENV:-}" == "preview" && -n "${VERCEL_GIT_COMMIT_REF:-}" ]]; then
   # The CLI reads XATA_API_KEY directly from the env; org/project come in via flags.
