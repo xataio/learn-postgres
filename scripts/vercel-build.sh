@@ -27,8 +27,7 @@ if [[ "${VERCEL_ENV:-}" == "preview" && -n "${VERCEL_GIT_COMMIT_REF:-}" ]]; then
   # Recreate from scratch on every push so the preview reflects the PR's
   # current schema + seed without drift across rebuilds.
   xata branch delete "$BRANCH_NAME" "${XATA_FLAGS[@]}" --yes || true
-  echo  xata branch create --name "$BRANCH_NAME" --parent-branch main "${XATA_FLAGS[@]}"
-  xata branch create --name "$BRANCH_NAME" --parent-branch main "${XATA_FLAGS[@]}"
+  xata branch create --name "$BRANCH_NAME" "${XATA_FLAGS[@]}"
   xata branch wait-ready "$BRANCH_NAME" "${XATA_FLAGS[@]}"
 
   DSN=$(xata branch url "$BRANCH_NAME" --type primary "${XATA_FLAGS[@]}")
