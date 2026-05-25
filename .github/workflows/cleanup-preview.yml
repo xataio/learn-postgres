@@ -20,12 +20,15 @@ jobs:
       - name: Delete preview branch
         env:
           XATA_API_KEY: ${{ secrets.XATA_API_KEY }}
-          XATA_ORGANIZATIONID: ${{ secrets.XATA_ORG_ID }}
-          XATA_PROJECTID: ${{ secrets.XATA_PROJECT_ID }}
+          XATA_ORG_ID: ${{ secrets.XATA_ORG_ID }}
+          XATA_MAIN_PROJECT_ID: ${{ secrets.XATA_MAIN_PROJECT_ID }}
           REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
           SAFE_REF=$(echo -n "$REF" | tr -c 'a-zA-Z0-9-_' '-' | cut -c1-50)
           BRANCH_NAME="preview-${SAFE_REF}"
           echo "Deleting Xata branch $BRANCH_NAME"
-          xata branch delete "$BRANCH_NAME" --yes || true
+          xata branch delete "$BRANCH_NAME" \
+            --organization "$XATA_ORG_ID" \
+            --project "$XATA_MAIN_PROJECT_ID" \
+            --yes || true
