@@ -1,32 +1,31 @@
 #!/usr/bin/env tsx
 /**
  * Validates every lesson under /lessons:
+ *   - the module/lesson folder tree is well-formed (names, uniqueness, module.yaml)
  *   - lesson.yaml parses and matches the Zod schema
- *   - folder name matches yaml `slug`
- *   - lesson.mdx exists and compiles
+ *   - lesson.mdx exists and is non-empty
  *   - seed file exists and has non-empty SQL (basic sanity, not parsed)
  *   - check IDs are unique within a lesson
+ *   - <Check id> referenced in MDX is declared in lesson.yaml
+ *
+ * Folder names are the source of truth for slug + order (see lesson-discovery),
+ * so this no longer cross-checks a yaml `slug` field.
  *
  * Exits non-zero on any failure. Designed for CI.
  */
 
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import yaml from "js-yaml";
-import { lessonMetaSchema, slugRegex } from "../lib/lesson-schema";
-
-const LESSONS_DIR = join(process.cwd(), "lessons");
+import { lessonFileSchema } from "../lib/lesson-schema";
+import { discoverLessons, type LessonEntry } from "../lib/lesson-discovery";
 
 type Result = { slug: string; ok: boolean; errors: string[] };
 
-async function validateOne(slug: string): Promise<Result> {
+async function validateOne(entry: LessonEntry): Promise<Result> {
+  const { slug, dir } = entry;
   const errors: string[] = [];
-  const dir = join(LESSONS_DIR, slug);
-
-  if (!slugRegex.test(slug)) {
-    errors.push(`folder name "${slug}" is not a valid slug`);
-  }
 
   const yamlPath = join(dir, "lesson.yaml");
   const mdxPath = join(dir, "lesson.mdx");
@@ -37,15 +36,10 @@ async function validateOne(slug: string): Promise<Result> {
 
   let meta;
   try {
-    const raw = yaml.load(await readFile(yamlPath, "utf8"));
-    meta = lessonMetaSchema.parse(raw);
+    meta = lessonFileSchema.parse(yaml.load(await readFile(yamlPath, "utf8")));
   } catch (err) {
     errors.push(`lesson.yaml invalid: ${(err as Error).message}`);
     return { slug, ok: false, errors };
-  }
-
-  if (meta.slug !== slug) {
-    errors.push(`yaml slug "${meta.slug}" does not match folder name "${slug}"`);
   }
 
   const seenIds = new Set<string>();
@@ -88,20 +82,21 @@ async function validateOne(slug: string): Promise<Result> {
 }
 
 async function main() {
-  if (!existsSync(LESSONS_DIR)) {
-    console.log("No /lessons directory — nothing to validate.");
-    return;
+  let entries: LessonEntry[];
+  try {
+    entries = await discoverLessons();
+  } catch (err) {
+    console.log("  ✗ lesson tree is malformed");
+    console.log(`      ${(err as Error).message}`);
+    process.exit(1);
   }
 
-  const entries = await readdir(LESSONS_DIR, { withFileTypes: true });
-  const slugs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
-
-  if (slugs.length === 0) {
+  if (entries.length === 0) {
     console.log("No lessons found.");
     return;
   }
 
-  const results = await Promise.all(slugs.map(validateOne));
+  const results = await Promise.all(entries.map(validateOne));
   results.sort((a, b) => a.slug.localeCompare(b.slug));
 
   let failures = 0;

@@ -1,8 +1,5 @@
-slug: 03-where-conditions
 title: WHERE in depth
 summary: Predicates beyond = — comparisons, AND/OR, IS NULL, LIKE, IN, BETWEEN.
-order: 3
-difficulty: beginner
 estimatedMinutes: 12
 tags:
   - select

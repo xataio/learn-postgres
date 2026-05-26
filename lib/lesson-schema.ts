@@ -34,11 +34,10 @@ export const checkSchema = z.discriminatedUnion("type", [
 
 export const difficultySchema = z.enum(["beginner", "intermediate", "advanced"]);
 
-export const lessonMetaSchema = z.object({
-  slug: z.string().regex(slugRegex),
+// Editorial fields authored in lesson.yaml. `slug` and `order` are NOT here —
+// they are derived from the lesson's folder name (the single source of truth).
+export const lessonFileSchema = z.object({
   title: z.string().min(1),
-  order: z.number().int().nonnegative(),
-  difficulty: difficultySchema,
   estimatedMinutes: z.number().int().positive(),
   tags: z.array(z.string()).default([]),
   authors: z.array(z.string()).default([]),
@@ -47,6 +46,38 @@ export const lessonMetaSchema = z.object({
   checks: z.array(checkSchema).default([]),
 });
 
-export type LessonMeta = z.infer<typeof lessonMetaSchema>;
+// Fields authored in a module's module.yaml. Slug/order come from the folder name.
+export const moduleFileSchema = z.object({
+  title: z.string().min(1),
+  difficulty: difficultySchema,
+  summary: z.string().optional(),
+});
+
+export type LessonFile = z.infer<typeof lessonFileSchema>;
+export type ModuleMeta = {
+  slug: string;
+  order: number;
+  title: string;
+  difficulty: Difficulty;
+  summary?: string;
+};
+export type LessonMeta = LessonFile & {
+  slug: string;
+  order: number;
+  module: ModuleMeta;
+};
 export type Check = z.infer<typeof checkSchema>;
 export type Difficulty = z.infer<typeof difficultySchema>;
+
+// Parses an ordered folder name like "01-select-basics" into its numeric order
+// and slug. Returns null when the name lacks an `NN-` prefix or the remainder
+// is not a valid slug.
+export function parseOrderedName(
+  name: string,
+): { order: number; slug: string } | null {
+  const m = name.match(/^(\d+)-(.+)$/);
+  if (!m) return null;
+  const slug = m[2];
+  if (!slugRegex.test(slug)) return null;
+  return { order: parseInt(m[1], 10), slug };
+}

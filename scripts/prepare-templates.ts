@@ -19,12 +19,13 @@
  */
 
 import { config } from "dotenv";
-import { readdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import yaml from "js-yaml";
 import { Client } from "pg";
-import { lessonMetaSchema } from "../lib/lesson-schema";
+import { lessonFileSchema } from "../lib/lesson-schema";
+import { discoverLessons } from "../lib/lesson-discovery";
 import { templateBranchName } from "../lib/templates";
 import {
   awaitConnectionString,
@@ -39,25 +40,18 @@ import {
 config({ path: ".env.local" });
 config({ path: ".env" });
 
-const LESSONS_DIR = join(process.cwd(), "lessons");
 const SEED_TIMEOUT_MS = 5 * 60_000;
 
 type LessonSeed = { slug: string; seedSql: string };
 
 async function loadLessonSeeds(): Promise<LessonSeed[]> {
-  if (!existsSync(LESSONS_DIR)) return [];
-  const entries = await readdir(LESSONS_DIR, { withFileTypes: true });
-  const slugs = entries.filter((e) => e.isDirectory()).map((e) => e.name);
+  const entries = await discoverLessons();
 
   const lessons: LessonSeed[] = [];
-  for (const slug of slugs) {
-    const dir = join(LESSONS_DIR, slug);
+  for (const { slug, dir } of entries) {
     const yamlPath = join(dir, "lesson.yaml");
     if (!existsSync(yamlPath)) throw new Error(`${slug}: missing lesson.yaml`);
-    const meta = lessonMetaSchema.parse(yaml.load(await readFile(yamlPath, "utf8")));
-    if (meta.slug !== slug) {
-      throw new Error(`${slug}: lesson.yaml slug "${meta.slug}" does not match folder`);
-    }
+    const meta = lessonFileSchema.parse(yaml.load(await readFile(yamlPath, "utf8")));
     const seedPath = join(dir, meta.seed);
     const seedSql = existsSync(seedPath) ? await readFile(seedPath, "utf8") : "";
     if (!seedSql.trim()) throw new Error(`${slug}: seed "${meta.seed}" is empty`);
