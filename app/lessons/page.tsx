@@ -60,9 +60,6 @@ export default async function LessonsCatalogPage() {
           {modules.map(({ module, lessons }) => (
             <section key={module.slug}>
               <div className="flex items-baseline gap-2">
-                <span className="font-mono text-xs text-zinc-400">
-                  Module {module.order}
-                </span>
                 <h2 className="font-mono text-lg font-semibold tracking-tight">
                   {module.title}
                 </h2>
@@ -72,6 +69,9 @@ export default async function LessonsCatalogPage() {
                   }`}
                 >
                   {module.difficulty}
+                </span>
+                <span className="ml-auto shrink-0 font-mono text-xs text-zinc-400">
+                  Module {module.order}
                 </span>
               </div>
               {module.summary && (

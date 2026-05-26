@@ -89,12 +89,12 @@ export default async function DashboardPage() {
         {modules.map(({ module, lessons }) => (
           <section key={module.slug}>
             <div className="flex items-baseline gap-2">
-              <span className="font-mono text-xs text-zinc-400">
-                Module {module.order}
-              </span>
               <h2 className="font-mono text-base font-semibold tracking-tight text-zinc-800 dark:text-zinc-200">
                 {module.title}
               </h2>
+              <span className="ml-auto shrink-0 font-mono text-xs text-zinc-400">
+                Module {module.order}
+              </span>
             </div>
 
             <ul className="mt-3 space-y-1.5">
