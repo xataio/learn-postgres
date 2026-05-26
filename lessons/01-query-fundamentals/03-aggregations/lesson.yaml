@@ -1,13 +1,11 @@
-slug: 05-joins
-title: Joining tables
-summary: Pull rows from two or more tables — INNER and LEFT JOIN, ON vs USING.
-order: 5
+title: Aggregations and GROUP BY
+summary: Roll rows up — COUNT, SUM, AVG, GROUP BY, and HAVING.
 difficulty: beginner
-estimatedMinutes: 14
+estimatedMinutes: 12
 tags:
-  - join
-  - inner-join
-  - left-join
+  - aggregate
+  - group-by
+  - having
 authors:
   - exekias
 seed: seed.sql

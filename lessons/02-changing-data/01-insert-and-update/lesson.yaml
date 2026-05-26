@@ -1,7 +1,5 @@
-slug: 02-insert-and-update
 title: Inserting and updating rows
 summary: Add data with INSERT, change it with UPDATE, see what happened with RETURNING.
-order: 2
 difficulty: beginner
 estimatedMinutes: 10
 tags:
