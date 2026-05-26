@@ -16,7 +16,7 @@ export function SignInButton({ callbackURL = "/dashboard" }: { callbackURL?: str
       type="button"
       onClick={onClick}
       disabled={loading}
-      className="flex items-center justify-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
+      className="flex cursor-pointer items-center justify-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
     >
       <svg
         viewBox="0 0 16 16"
