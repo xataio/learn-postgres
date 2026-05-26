@@ -90,7 +90,6 @@ async function main() {
     join(dir, "lesson.yaml"),
     `title: ${title}
 summary: One-line description of what the learner will do.
-difficulty: beginner
 estimatedMinutes: 10
 tags: []
 authors: []

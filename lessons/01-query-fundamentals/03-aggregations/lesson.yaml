@@ -1,6 +1,5 @@
 title: Aggregations and GROUP BY
 summary: Roll rows up — COUNT, SUM, AVG, GROUP BY, and HAVING.
-difficulty: beginner
 estimatedMinutes: 12
 tags:
   - aggregate

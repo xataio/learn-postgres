@@ -38,7 +38,6 @@ export const difficultySchema = z.enum(["beginner", "intermediate", "advanced"])
 // they are derived from the lesson's folder name (the single source of truth).
 export const lessonFileSchema = z.object({
   title: z.string().min(1),
-  difficulty: difficultySchema,
   estimatedMinutes: z.number().int().positive(),
   tags: z.array(z.string()).default([]),
   authors: z.array(z.string()).default([]),
@@ -50,6 +49,7 @@ export const lessonFileSchema = z.object({
 // Fields authored in a module's module.yaml. Slug/order come from the folder name.
 export const moduleFileSchema = z.object({
   title: z.string().min(1),
+  difficulty: difficultySchema,
   summary: z.string().optional(),
 });
 
@@ -58,6 +58,7 @@ export type ModuleMeta = {
   slug: string;
   order: number;
   title: string;
+  difficulty: Difficulty;
   summary?: string;
 };
 export type LessonMeta = LessonFile & {

@@ -66,7 +66,7 @@ export default async function LessonPage({
         </div>
         <div className="flex items-center gap-3 text-xs text-zinc-500">
           <span>
-            {lesson.meta.difficulty} · {lesson.meta.estimatedMinutes} min
+            {lesson.meta.module.difficulty} · {lesson.meta.estimatedMinutes} min
           </span>
           {totalChecks > 0 && (
             <span

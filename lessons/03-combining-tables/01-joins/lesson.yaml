@@ -1,6 +1,5 @@
 title: Joining tables
 summary: Pull rows from two or more tables — INNER and LEFT JOIN, ON vs USING.
-difficulty: beginner
 estimatedMinutes: 14
 tags:
   - join

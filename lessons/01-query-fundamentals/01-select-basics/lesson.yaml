@@ -1,6 +1,5 @@
 title: SELECT basics
 summary: Pull rows out of a table — projection, filtering, and ordering.
-difficulty: beginner
 estimatedMinutes: 8
 tags:
   - select

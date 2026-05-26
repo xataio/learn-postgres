@@ -73,6 +73,7 @@ export async function discoverLessons(): Promise<LessonEntry[]> {
       slug: parsedMod.slug,
       order: parsedMod.order,
       title: moduleFile.title,
+      difficulty: moduleFile.difficulty,
       summary: moduleFile.summary,
     };
 

@@ -66,6 +66,13 @@ export default async function LessonsCatalogPage() {
                 <h2 className="font-mono text-lg font-semibold tracking-tight">
                   {module.title}
                 </h2>
+                <span
+                  className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+                    difficultyBadge[module.difficulty] ?? ""
+                  }`}
+                >
+                  {module.difficulty}
+                </span>
               </div>
               {module.summary && (
                 <p className="mt-1 text-sm text-zinc-500">{module.summary}</p>
@@ -82,32 +89,23 @@ export default async function LessonsCatalogPage() {
                       key={lesson.meta.slug}
                       className="rounded-lg border border-black/10 p-4 transition hover:border-black/20 hover:bg-black/[.02] dark:border-white/10 dark:hover:border-white/20 dark:hover:bg-white/[.02]"
                     >
-                      <div className="flex items-baseline justify-between gap-4">
-                        <div className="min-w-0">
-                          <h3 className="truncate font-mono text-base font-semibold">
-                            <Link
-                              href={`/lessons/${lesson.meta.slug}`}
-                              className="hover:underline"
-                            >
-                              <span className="text-zinc-400">
-                                {String(lesson.meta.order).padStart(2, "0")}.
-                              </span>{" "}
-                              {lesson.meta.title}
-                            </Link>
-                          </h3>
-                          {lesson.meta.summary && (
-                            <p className="mt-1 text-sm text-zinc-500">
-                              {lesson.meta.summary}
-                            </p>
-                          )}
-                        </div>
-                        <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
-                            difficultyBadge[lesson.meta.difficulty] ?? ""
-                          }`}
-                        >
-                          {lesson.meta.difficulty}
-                        </span>
+                      <div className="min-w-0">
+                        <h3 className="truncate font-mono text-base font-semibold">
+                          <Link
+                            href={`/lessons/${lesson.meta.slug}`}
+                            className="hover:underline"
+                          >
+                            <span className="text-zinc-400">
+                              {String(lesson.meta.order).padStart(2, "0")}.
+                            </span>{" "}
+                            {lesson.meta.title}
+                          </Link>
+                        </h3>
+                        {lesson.meta.summary && (
+                          <p className="mt-1 text-sm text-zinc-500">
+                            {lesson.meta.summary}
+                          </p>
+                        )}
                       </div>
                       <div className="mt-3 flex items-center gap-3 text-xs text-zinc-500">
                         <span>{lesson.meta.estimatedMinutes} min</span>

@@ -1,6 +1,5 @@
 title: Inserting and updating rows
 summary: Add data with INSERT, change it with UPDATE, see what happened with RETURNING.
-difficulty: beginner
 estimatedMinutes: 10
 tags:
   - insert

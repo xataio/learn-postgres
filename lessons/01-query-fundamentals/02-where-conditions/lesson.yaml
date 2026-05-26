@@ -1,6 +1,5 @@
 title: WHERE in depth
 summary: Predicates beyond = — comparisons, AND/OR, IS NULL, LIKE, IN, BETWEEN.
-difficulty: beginner
 estimatedMinutes: 12
 tags:
   - select
