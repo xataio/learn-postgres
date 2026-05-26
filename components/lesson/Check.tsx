@@ -64,6 +64,7 @@ export function CheckCard({
 
   return (
     <aside
+      id={check?.id}
       data-check-id={check?.id}
       className={`not-prose my-6 rounded-lg border p-4 ${styles.frame}`}
     >
@@ -107,7 +108,7 @@ export function CheckCard({
           ) : (
             <button
               type="button"
-              onClick={() => signIn.social({ provider: "github", callbackURL })}
+              onClick={() => signIn.social({ provider: "github", callbackURL: check?.id ? `${callbackURL}#${check.id}` : callbackURL })}
               className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 text-xs font-medium hover:bg-black/[.04] dark:border-white/10 dark:bg-zinc-950 dark:hover:bg-white/[.04]"
             >
               Sign in to check

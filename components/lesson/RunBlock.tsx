@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { useRef, useId, type ReactNode } from "react";
 import { signIn } from "@/lib/auth-client";
 
 type Props = {
@@ -11,6 +11,7 @@ type Props = {
 
 export function RunBlock({ children, isSignedIn = true, callbackURL = "/dashboard" }: Props) {
   const preRef = useRef<HTMLPreElement>(null);
+  const id = useId();
 
   const onRun = () => {
     // Collapse the multi-line, prose-friendly formatting in the rendered block
@@ -21,11 +22,11 @@ export function RunBlock({ children, isSignedIn = true, callbackURL = "/dashboar
   };
 
   const onSignIn = () => {
-    signIn.social({ provider: "github", callbackURL });
+    signIn.social({ provider: "github", callbackURL: `${callbackURL}#${encodeURIComponent(id)}` });
   };
 
   return (
-    <div className="not-prose my-5 overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
+    <div id={id} className="not-prose my-5 overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
       <div className="flex items-center justify-between border-b border-black/5 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-500 dark:border-white/5 dark:bg-zinc-900/60">
         <span className="font-mono">sql</span>
         {isSignedIn ? (
