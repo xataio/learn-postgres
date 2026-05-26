@@ -16,9 +16,18 @@ export async function SandboxSection({
   userId,
   lesson,
 }: {
-  userId: string;
+  userId: string | undefined;
   lesson: Lesson;
 }) {
+  if (!userId) {
+    return (
+      <BranchPanel
+        kind="unauthenticated"
+        callbackURL={`/lessons/${lesson.meta.slug}`}
+      />
+    );
+  }
+
   if (
     !process.env.XATA_API_KEY ||
     !process.env.XATA_ORG_ID ||

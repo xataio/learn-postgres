@@ -3,12 +3,12 @@
 import { useState } from "react";
 import { signIn } from "@/lib/auth-client";
 
-export function SignInButton() {
+export function SignInButton({ callbackURL = "/dashboard" }: { callbackURL?: string }) {
   const [loading, setLoading] = useState(false);
 
   const onClick = async () => {
     setLoading(true);
-    await signIn.social({ provider: "github", callbackURL: "/dashboard" });
+    await signIn.social({ provider: "github", callbackURL });
   };
 
   return (

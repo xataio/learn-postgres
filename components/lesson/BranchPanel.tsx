@@ -1,8 +1,22 @@
+import { SignInButton } from "@/app/sign-in-button";
+
 type Props =
   | { kind: "unconfigured" }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  | { kind: "unauthenticated"; callbackURL: string };
 
 export function BranchPanel(props: Props) {
+  if (props.kind === "unauthenticated") {
+    return (
+      <div className="flex flex-col items-center justify-center gap-4 rounded-lg border border-black/10 bg-zinc-50 p-6 text-center dark:border-white/10 dark:bg-zinc-900/40">
+        <p className="text-sm text-zinc-600 dark:text-zinc-400">
+          Sign in to start your Postgres sandbox and run queries.
+        </p>
+        <SignInButton callbackURL={props.callbackURL} />
+      </div>
+    );
+  }
+
   if (props.kind === "unconfigured") {
     return (
       <div className="rounded-lg border border-amber-300/60 bg-amber-50 p-4 dark:border-amber-500/30 dark:bg-amber-950/30">
