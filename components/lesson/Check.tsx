@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, type ReactNode } from "react";
+import { SignInButton } from "@/app/sign-in-button";
 import type { Check } from "@/lib/lesson-schema";
 
 type Status = "idle" | "running" | "pass" | "fail";
@@ -9,6 +10,8 @@ type Props = {
   check: Check | undefined;
   lessonSlug: string;
   initiallyPassed: boolean;
+  isSignedIn: boolean;
+  callbackURL: string;
   children?: ReactNode;
 };
 
@@ -16,6 +19,8 @@ export function CheckCard({
   check,
   lessonSlug,
   initiallyPassed,
+  isSignedIn,
+  callbackURL,
   children,
 }: Props) {
   const [status, setStatus] = useState<Status>(
@@ -86,18 +91,24 @@ export function CheckCard({
 
       {check && (
         <div className="mt-3 flex items-center gap-3">
-          <button
-            type="button"
-            onClick={onRun}
-            disabled={!canRun}
-            className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 text-xs font-medium hover:bg-black/[.04] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-zinc-950 dark:hover:bg-white/[.04]"
-          >
-            {status === "running"
-              ? "Checking…"
-              : status === "pass"
-                ? "Re-check"
-                : "Check"}
-          </button>
+          {isSignedIn ? (
+            <button
+              type="button"
+              onClick={onRun}
+              disabled={!canRun}
+              className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 text-xs font-medium hover:bg-black/[.04] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-zinc-950 dark:hover:bg-white/[.04]"
+            >
+              {status === "running"
+                ? "Checking…"
+                : status === "pass"
+                  ? "Re-check"
+                  : "Check"}
+            </button>
+          ) : (
+            <SignInButton variant="inline" callbackURL={callbackURL}>
+              Sign in to check
+            </SignInButton>
+          )}
         </div>
       )}
     </aside>

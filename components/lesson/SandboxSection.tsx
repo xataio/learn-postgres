@@ -5,6 +5,7 @@ import {
 import type { Lesson } from "@/lib/lessons";
 import { BranchPanel } from "./BranchPanel";
 import { SandboxPanel } from "./SandboxPanel";
+import { SandboxSignInPrompt } from "./SandboxSignInPrompt";
 
 /**
  * Server component that does the slow Xata work for a lesson sandbox. Rendered
@@ -16,9 +17,16 @@ export async function SandboxSection({
   userId,
   lesson,
 }: {
-  userId: string;
+  userId: string | null;
   lesson: Lesson;
 }) {
+  // Anonymous visitors can read the lesson but don't get a Xata branch.
+  if (!userId) {
+    return (
+      <SandboxSignInPrompt callbackURL={`/lessons/${lesson.meta.slug}`} />
+    );
+  }
+
   if (
     !process.env.XATA_API_KEY ||
     !process.env.XATA_ORG_ID ||

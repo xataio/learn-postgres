@@ -1,7 +1,7 @@
 import { Suspense } from "react";
 import Link from "next/link";
 import { headers } from "next/headers";
-import { notFound, redirect } from "next/navigation";
+import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { auth } from "@/lib/auth";
 import { getAllLessons, getLesson } from "@/lib/lessons";
@@ -32,13 +32,15 @@ export default async function LessonPage({
   const { slug } = await params;
 
   const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/");
+  const isSignedIn = !!session;
 
   const lesson = await getLesson(slug);
   if (!lesson) notFound();
 
-  const passedCheckIds = await getPassedCheckIds(session.user.id, slug);
-  const components = buildLessonComponents({ lesson, passedCheckIds });
+  const passedCheckIds = session
+    ? await getPassedCheckIds(session.user.id, slug)
+    : new Set<string>();
+  const components = buildLessonComponents({ lesson, passedCheckIds, isSignedIn });
   const totalChecks = lesson.meta.checks.length;
   const passedCount = passedCheckIds.size;
 
@@ -123,7 +125,7 @@ export default async function LessonPage({
 
         <div className="flex flex-col gap-3 lg:sticky lg:top-6 lg:self-start lg:h-[calc(100dvh-3rem)]">
           <Suspense fallback={<SandboxLoading />}>
-            <SandboxSection userId={session.user.id} lesson={lesson} />
+            <SandboxSection userId={session?.user.id ?? null} lesson={lesson} />
           </Suspense>
         </div>
       </div>
