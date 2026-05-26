@@ -1,13 +1,10 @@
-slug: 04-aggregations
-title: Aggregations and GROUP BY
-summary: Roll rows up — COUNT, SUM, AVG, GROUP BY, and HAVING.
-order: 4
-difficulty: beginner
-estimatedMinutes: 12
+title: Joining tables
+summary: Pull rows from two or more tables — INNER and LEFT JOIN, ON vs USING.
+estimatedMinutes: 14
 tags:
-  - aggregate
-  - group-by
-  - having
+  - join
+  - inner-join
+  - left-join
 authors:
   - exekias
 seed: seed.sql

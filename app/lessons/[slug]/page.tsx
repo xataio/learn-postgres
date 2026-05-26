@@ -59,12 +59,17 @@ export default async function LessonPage({
       </div>
 
       <header className="mt-3 flex flex-wrap items-baseline justify-between gap-3">
-        <h1 className="font-mono text-2xl font-semibold tracking-tight">
-          {lesson.meta.title}
-        </h1>
+        <div className="min-w-0">
+          <p className="font-mono text-xs text-zinc-400">
+            Module {lesson.meta.module.order} · {lesson.meta.module.title}
+          </p>
+          <h1 className="mt-0.5 font-mono text-2xl font-semibold tracking-tight">
+            {lesson.meta.title}
+          </h1>
+        </div>
         <div className="flex items-center gap-3 text-xs text-zinc-500">
           <span>
-            {lesson.meta.difficulty} · {lesson.meta.estimatedMinutes} min
+            {lesson.meta.module.difficulty} · {lesson.meta.estimatedMinutes} min
           </span>
           {totalChecks > 0 && (
             <span
