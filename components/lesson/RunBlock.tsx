@@ -2,6 +2,7 @@
 
 import { useRef, useId, type ReactNode } from "react";
 import { signIn } from "@/lib/auth-client";
+import { storeScrollAnchor } from "./ScrollToAnchor";
 
 type Props = {
   children: ReactNode;
@@ -11,7 +12,8 @@ type Props = {
 
 export function RunBlock({ children, isSignedIn = true, callbackURL = "/dashboard" }: Props) {
   const preRef = useRef<HTMLPreElement>(null);
-  const id = useId();
+  // useId() produces ids like ":r0:" — strip colons so the id is a clean URL-fragment-safe string.
+  const id = useId().replace(/:/g, "");
 
   const onRun = () => {
     // Collapse the multi-line, prose-friendly formatting in the rendered block
@@ -22,7 +24,8 @@ export function RunBlock({ children, isSignedIn = true, callbackURL = "/dashboar
   };
 
   const onSignIn = () => {
-    signIn.social({ provider: "github", callbackURL: `${callbackURL}#${encodeURIComponent(id)}` });
+    storeScrollAnchor(id);
+    signIn.social({ provider: "github", callbackURL });
   };
 
   return (
@@ -33,7 +36,7 @@ export function RunBlock({ children, isSignedIn = true, callbackURL = "/dashboar
           <button
             type="button"
             onClick={onRun}
-            className="rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
+            className="cursor-pointer rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
             title="Run in your shell"
           >
             ▶ Run
@@ -42,7 +45,7 @@ export function RunBlock({ children, isSignedIn = true, callbackURL = "/dashboar
           <button
             type="button"
             onClick={onSignIn}
-            className="rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
+            className="cursor-pointer rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
             title="Sign in to run this query"
           >
             Sign in to run

@@ -2,6 +2,7 @@
 
 import { useState, type ReactNode } from "react";
 import { signIn } from "@/lib/auth-client";
+import { storeScrollAnchor } from "./ScrollToAnchor";
 import type { Check } from "@/lib/lesson-schema";
 
 type Status = "idle" | "running" | "pass" | "fail";
@@ -97,7 +98,7 @@ export function CheckCard({
               type="button"
               onClick={onRun}
               disabled={!canRun}
-              className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 text-xs font-medium hover:bg-black/[.04] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-zinc-950 dark:hover:bg-white/[.04]"
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 text-xs font-medium hover:bg-black/[.04] disabled:cursor-not-allowed disabled:opacity-50 dark:border-white/10 dark:bg-zinc-950 dark:hover:bg-white/[.04]"
             >
               {status === "running"
                 ? "Checking…"
@@ -108,8 +109,11 @@ export function CheckCard({
           ) : (
             <button
               type="button"
-              onClick={() => signIn.social({ provider: "github", callbackURL: check?.id ? `${callbackURL}#${check.id}` : callbackURL })}
-              className="inline-flex items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 text-xs font-medium hover:bg-black/[.04] dark:border-white/10 dark:bg-zinc-950 dark:hover:bg-white/[.04]"
+              onClick={() => {
+                if (check?.id) storeScrollAnchor(check.id);
+                signIn.social({ provider: "github", callbackURL });
+              }}
+              className="inline-flex cursor-pointer items-center gap-1.5 rounded-md border border-black/10 bg-white px-2.5 py-1 text-xs font-medium hover:bg-black/[.04] dark:border-white/10 dark:bg-zinc-950 dark:hover:bg-white/[.04]"
             >
               Sign in to check
             </button>
