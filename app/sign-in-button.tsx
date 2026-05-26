@@ -7,17 +7,27 @@ type Props = {
   callbackURL?: string;
   variant?: "default" | "inline";
   children?: ReactNode;
+  // Stash the current scroll offset so the destination page can restore it
+  // after the OAuth round-trip lands the user back where they were reading.
+  preserveScroll?: boolean;
 };
 
 export function SignInButton({
   callbackURL = "/dashboard",
   variant = "default",
   children,
+  preserveScroll = false,
 }: Props) {
   const [loading, setLoading] = useState(false);
 
   const onClick = async () => {
     setLoading(true);
+    if (preserveScroll) {
+      sessionStorage.setItem(
+        `learn:scroll-restore:${callbackURL}`,
+        String(window.scrollY),
+      );
+    }
     await signIn.social({ provider: "github", callbackURL });
   };
 

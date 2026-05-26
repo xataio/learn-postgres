@@ -8,6 +8,7 @@ import { getAllLessons, getLesson } from "@/lib/lessons";
 import { buildLessonComponents } from "@/components/lesson/mdx-components";
 import { SandboxSection } from "@/components/lesson/SandboxSection";
 import { SandboxLoading } from "@/components/lesson/SandboxLoading";
+import { RestoreScroll } from "@/components/lesson/RestoreScroll";
 import { getPassedCheckIds } from "@/lib/lesson-progress";
 
 type Params = { slug: string };
@@ -51,6 +52,7 @@ export default async function LessonPage({
 
   return (
     <div className="px-6 py-6">
+      <RestoreScroll />
       <div className="text-xs text-zinc-500">
         <Link href="/lessons" className="hover:underline">
           ← All lessons

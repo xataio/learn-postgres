@@ -34,7 +34,7 @@ export function RunBlock({ children, isSignedIn, callbackURL }: Props) {
             ▶ Run
           </button>
         ) : (
-          <SignInButton variant="inline" callbackURL={callbackURL}>
+          <SignInButton variant="inline" callbackURL={callbackURL} preserveScroll>
             Sign in to run
           </SignInButton>
         )}

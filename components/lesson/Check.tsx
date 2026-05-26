@@ -105,7 +105,7 @@ export function CheckCard({
                   : "Check"}
             </button>
           ) : (
-            <SignInButton variant="inline" callbackURL={callbackURL}>
+            <SignInButton variant="inline" callbackURL={callbackURL} preserveScroll>
               Sign in to check
             </SignInButton>
           )}

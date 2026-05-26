@@ -21,7 +21,7 @@ export function SandboxSignInPrompt({ callbackURL }: { callbackURL: string }) {
               Sign in to spin up your own Postgres sandbox and run the queries
               for this lesson.
             </p>
-            <SignInButton callbackURL={callbackURL}>
+            <SignInButton callbackURL={callbackURL} preserveScroll>
               Sign in to start the sandbox
             </SignInButton>
           </div>
