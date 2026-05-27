@@ -1,10 +1,10 @@
 import Link from "next/link";
 import { headers } from "next/headers";
-import { redirect } from "next/navigation";
 import { auth } from "@/lib/auth";
 import { getModules } from "@/lib/lessons";
 import { getProgressCounts } from "@/lib/lesson-progress";
 import { SignOutButton } from "./sign-out-button";
+import { SignInButton } from "@/app/sign-in-button";
 
 type Bucket = "continue" | "completed" | "available";
 
@@ -24,15 +24,18 @@ function classify(passed: number, total: number): Bucket {
 }
 
 export default async function DashboardPage() {
-  const session = await auth.api.getSession({ headers: await headers() });
-  if (!session) redirect("/");
+  const session = await auth.api
+    .getSession({ headers: await headers() })
+    .catch(() => null);
 
   const modules = await getModules();
   const allLessons = modules.flatMap((m) => m.lessons);
-  const progress = await getProgressCounts(
-    session.user.id,
-    allLessons.map((l) => l.meta.slug),
-  );
+  const progress = session
+    ? await getProgressCounts(
+        session.user.id,
+        allLessons.map((l) => l.meta.slug),
+      )
+    : new Map<string, number>();
 
   const stateBySlug = new Map<string, Progress>();
   for (const lesson of allLessons) {
@@ -52,37 +55,47 @@ export default async function DashboardPage() {
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
       <header>
-        <h1 className="font-mono text-2xl font-semibold tracking-tight">
-          Welcome, {session.user.name}
-        </h1>
-        <p className="mt-2 text-sm text-zinc-500">
-          Signed in as {session.user.email}.
-        </p>
-        <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
-          {completedCount > 0 ? (
-            <>
-              You&apos;ve completed{" "}
-              <strong className="font-semibold">{completedCount}</strong>{" "}
-              {completedCount === 1 ? "lesson" : "lessons"}
-              {startedCount > 0 ? (
-                <>
-                  {" "}and have{" "}
-                  <strong className="font-semibold">{startedCount}</strong> in
-                  progress.
-                </>
-              ) : (
-                "."
-              )}
-            </>
-          ) : startedCount > 0 ? (
-            <>
-              You have <strong className="font-semibold">{startedCount}</strong>{" "}
-              {startedCount === 1 ? "lesson" : "lessons"} in progress.
-            </>
-          ) : (
-            <>Pick a lesson below to begin.</>
-          )}
-        </p>
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <h1 className="font-mono text-2xl font-semibold tracking-tight">
+              {session ? `Welcome, ${session.user.name}` : "Lessons"}
+            </h1>
+            <p className="mt-2 text-sm text-zinc-500">
+              {session
+                ? `Signed in as ${session.user.email}.`
+                : "Short, hands-on Postgres exercises. Sign in to run them in your own sandbox and track your progress."}
+            </p>
+          </div>
+          <div className="shrink-0">{session ? <SignOutButton /> : <SignInButton />}</div>
+        </div>
+        {session && (
+          <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
+            {completedCount > 0 ? (
+              <>
+                You&apos;ve completed{" "}
+                <strong className="font-semibold">{completedCount}</strong>{" "}
+                {completedCount === 1 ? "lesson" : "lessons"}
+                {startedCount > 0 ? (
+                  <>
+                    {" "}and have{" "}
+                    <strong className="font-semibold">{startedCount}</strong> in
+                    progress.
+                  </>
+                ) : (
+                  "."
+                )}
+              </>
+            ) : startedCount > 0 ? (
+              <>
+                You have{" "}
+                <strong className="font-semibold">{startedCount}</strong>{" "}
+                {startedCount === 1 ? "lesson" : "lessons"} in progress.
+              </>
+            ) : (
+              <>Pick a lesson below to begin.</>
+            )}
+          </p>
+        )}
       </header>
 
       <div className="mt-10 space-y-10">
@@ -106,17 +119,30 @@ export default async function DashboardPage() {
                   <li key={lesson.meta.slug}>
                     <Link
                       href={`/lessons/${lesson.meta.slug}`}
-                      className="group flex items-center gap-3 rounded-md border border-black/10 px-3 py-2 transition hover:border-black/20 hover:bg-black/[.02] dark:border-white/10 dark:hover:border-white/20 dark:hover:bg-white/[.02]"
+                      className="group flex items-start gap-3 rounded-md border border-black/10 px-3 py-2 transition hover:border-black/20 hover:bg-black/[.02] dark:border-white/10 dark:hover:border-white/20 dark:hover:bg-white/[.02]"
                     >
-                      <span className="font-mono text-xs text-zinc-400">
+                      <span className="mt-0.5 font-mono text-xs text-zinc-400">
                         {String(lesson.meta.order).padStart(2, "0")}
                       </span>
-                      <span className="min-w-0 flex-1 truncate font-mono text-sm font-medium text-zinc-800 group-hover:underline dark:text-zinc-200">
-                        {lesson.meta.title}
-                      </span>
-                      {total > 0 && (
+                      <div className="min-w-0 flex-1">
+                        <span className="block truncate font-mono text-sm font-medium text-zinc-800 group-hover:underline dark:text-zinc-200">
+                          {lesson.meta.title}
+                        </span>
+                        <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
+                          <span>{lesson.meta.estimatedMinutes} min</span>
+                          {lesson.meta.tags.length > 0 && (
+                            <>
+                              <span aria-hidden>·</span>
+                              <span className="truncate">
+                                {lesson.meta.tags.join(" · ")}
+                              </span>
+                            </>
+                          )}
+                        </div>
+                      </div>
+                      {session && total > 0 && (
                         <span
-                          className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${PILL_TONE[bucket]}`}
+                          className={`mt-0.5 shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${PILL_TONE[bucket]}`}
                         >
                           {bucket === "completed" && (
                             <span aria-hidden className="mr-1">
@@ -133,10 +159,6 @@ export default async function DashboardPage() {
             </ul>
           </section>
         ))}
-      </div>
-
-      <div className="mt-12 border-t border-black/5 pt-6 dark:border-white/5">
-        <SignOutButton />
       </div>
     </div>
   );

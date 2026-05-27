@@ -16,7 +16,7 @@ export default function Home() {
         <div className="mt-10 flex flex-wrap gap-3">
           <SignInButton />
           <Link
-            href="/lessons"
+            href="/dashboard"
             className="rounded-md border border-black/10 px-5 py-2.5 text-sm font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
           >
             Browse lessons

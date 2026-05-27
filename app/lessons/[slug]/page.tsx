@@ -54,7 +54,7 @@ export default async function LessonPage({
     <div className="px-6 py-6">
       <RestoreScroll />
       <div className="text-xs text-zinc-500">
-        <Link href="/lessons" className="hover:underline">
+        <Link href="/dashboard" className="hover:underline">
           ← All lessons
         </Link>
       </div>
