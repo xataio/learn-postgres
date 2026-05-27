@@ -6,9 +6,15 @@ import { RunBlock } from "./RunBlock";
 type BuildOpts = {
   lesson: Lesson;
   passedCheckIds: Set<string>;
+  isSignedIn: boolean;
 };
 
-export function buildLessonComponents({ lesson, passedCheckIds }: BuildOpts) {
+export function buildLessonComponents({
+  lesson,
+  passedCheckIds,
+  isSignedIn,
+}: BuildOpts) {
+  const callbackURL = `/lessons/${lesson.meta.slug}`;
   return {
     Check: ({ id, children }: { id: string; children?: ReactNode }) => {
       const check = lesson.meta.checks.find((c) => c.id === id);
@@ -17,13 +23,17 @@ export function buildLessonComponents({ lesson, passedCheckIds }: BuildOpts) {
           check={check}
           lessonSlug={lesson.meta.slug}
           initiallyPassed={passedCheckIds.has(id)}
+          isSignedIn={isSignedIn}
+          callbackURL={callbackURL}
         >
           {children}
         </CheckCard>
       );
     },
     Run: ({ children }: { children: ReactNode }) => (
-      <RunBlock>{children}</RunBlock>
+      <RunBlock isSignedIn={isSignedIn} callbackURL={callbackURL}>
+        {children}
+      </RunBlock>
     ),
     pre: (props: ComponentProps<"pre">) => (
       <pre

@@ -1,8 +1,15 @@
 "use client";
 
 import { useRef, type ReactNode } from "react";
+import { SignInButton } from "@/app/sign-in-button";
 
-export function RunBlock({ children }: { children: ReactNode }) {
+type Props = {
+  children: ReactNode;
+  isSignedIn: boolean;
+  callbackURL: string;
+};
+
+export function RunBlock({ children, isSignedIn, callbackURL }: Props) {
   const preRef = useRef<HTMLPreElement>(null);
 
   const onRun = () => {
@@ -17,14 +24,20 @@ export function RunBlock({ children }: { children: ReactNode }) {
     <div className="not-prose my-5 overflow-hidden rounded-lg border border-black/10 dark:border-white/10">
       <div className="flex items-center justify-between border-b border-black/5 bg-zinc-50 px-3 py-1.5 text-xs text-zinc-500 dark:border-white/5 dark:bg-zinc-900/60">
         <span className="font-mono">sql</span>
-        <button
-          type="button"
-          onClick={onRun}
-          className="rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
-          title="Run in your shell"
-        >
-          ▶ Run
-        </button>
+        {isSignedIn ? (
+          <button
+            type="button"
+            onClick={onRun}
+            className="rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
+            title="Run in your shell"
+          >
+            ▶ Run
+          </button>
+        ) : (
+          <SignInButton variant="inline" callbackURL={callbackURL} preserveScroll>
+            Sign in to run
+          </SignInButton>
+        )}
       </div>
       <pre
         ref={preRef}
