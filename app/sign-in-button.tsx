@@ -13,7 +13,7 @@ type Props = {
 };
 
 export function SignInButton({
-  callbackURL = "/dashboard",
+  callbackURL = "/lessons",
   variant = "default",
   children,
   preserveScroll = false,
