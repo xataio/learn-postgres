@@ -101,14 +101,40 @@ Three tables (two of them the same table aliased differently), one result. The `
 
 A useful mental table:
 
-| You want…                                                    | Use            |
-| ------------------------------------------------------------ | -------------- |
-| Rows that match on both sides                                | `INNER JOIN`   |
-| All rows from the left, matches from the right where present | `LEFT JOIN`    |
-| Same, but with the tables in the other order                 | `RIGHT JOIN`   |
-| All rows from both sides, NULLs where they don't match       | `FULL JOIN`    |
-| Every combination of left × right                            | `CROSS JOIN`   |
-| A row's relationship to other rows in the same table         | self-join      |
+<table>
+  <thead>
+    <tr>
+      <th>You want…</th>
+      <th>Use</th>
+    </tr>
+  </thead>
+  <tbody>
+    <tr>
+      <td>Rows that match on both sides</td>
+      <td><code>INNER JOIN</code></td>
+    </tr>
+    <tr>
+      <td>All rows from the left, matches from the right where present</td>
+      <td><code>LEFT JOIN</code></td>
+    </tr>
+    <tr>
+      <td>Same, but with the tables in the other order</td>
+      <td><code>RIGHT JOIN</code></td>
+    </tr>
+    <tr>
+      <td>All rows from both sides, NULLs where they don't match</td>
+      <td><code>FULL JOIN</code></td>
+    </tr>
+    <tr>
+      <td>Every combination of left × right</td>
+      <td><code>CROSS JOIN</code></td>
+    </tr>
+    <tr>
+      <td>A row's relationship to other rows in the same table</td>
+      <td>self-join</td>
+    </tr>
+  </tbody>
+</table>
 
 A working rule: prefer `LEFT` over `RIGHT` so the "keep all" table is on the left. Reach for `FULL` only when both sides legitimately matter. Use `CROSS` deliberately — never by accident.
 
