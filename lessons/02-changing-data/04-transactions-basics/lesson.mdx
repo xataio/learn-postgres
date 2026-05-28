@@ -1,0 +1,103 @@
+A transaction groups a sequence of statements so they all succeed together or none of them takes effect. It's the feature you'd miss most if Postgres took it away — the one that keeps your data consistent when something halfway through goes wrong.
+
+The seed has an `accounts` table with three owners, each starting at 100. We'll use it to write the textbook "transfer money" example and watch transactions actually do their job.
+
+## The implicit transaction
+
+Every statement you've run so far has been wrapped in its own transaction — Postgres calls this *autocommit*. `INSERT INTO ...` is really `BEGIN; INSERT INTO ...; COMMIT;`. You haven't had to think about it because each statement either succeeds or raises an error before changing anything visible.
+
+The moment you have **two statements that must both succeed or both fail**, autocommit isn't enough.
+
+## BEGIN ... COMMIT
+
+The shape: `BEGIN;` opens a transaction, your statements run inside it, `COMMIT;` makes them durable.
+
+<Run>
+BEGIN;
+UPDATE accounts SET balance = balance - 20 WHERE owner = 'ada';
+UPDATE accounts SET balance = balance + 20 WHERE owner = 'grace';
+COMMIT;
+</Run>
+
+<Check id="ada-balance-after-transfer">
+Ada had 100 and just sent 20 to Grace inside a committed transaction. Her balance is now 80.
+</Check>
+
+<Check id="transfer-balances-preserved">
+The transfer didn't create or destroy money — the three accounts still sum to 300.
+</Check>
+
+Inside the transaction, the two UPDATEs are *not yet visible to other connections*. Only at `COMMIT;` does the world see both changes simultaneously. If something failed between them — a constraint violation, a network drop, the database crashing — neither change would have landed.
+
+## ROLLBACK: undo, on purpose
+
+`ROLLBACK;` discards every change made since the matching `BEGIN`. Useful as a tool — and essential when you realize an UPDATE was about to be too broad.
+
+<Run>
+BEGIN;
+UPDATE accounts SET balance = 0;
+SELECT owner, balance FROM accounts;
+ROLLBACK;
+</Run>
+
+The `SELECT` *inside* the transaction sees the zeros — that's the state you'd be committing. The `ROLLBACK` throws it away. After running this block, querying outside the transaction shows the original balances.
+
+<Run>
+SELECT owner, balance FROM accounts ORDER BY owner;
+</Run>
+
+Use `BEGIN; ... ROLLBACK;` as a dry-run for destructive statements: write the UPDATE or DELETE, run it inside a transaction, inspect what it touched, and roll back if it's wrong. Cheaper than a backup.
+
+## Errors auto-rollback
+
+If a statement inside a transaction *errors*, Postgres marks the transaction as **aborted**: every subsequent statement fails with `current transaction is aborted, commands ignored until end of transaction block` until you issue `COMMIT` or `ROLLBACK`. Both end the transaction; the difference at that point is purely semantic — the changes are gone either way.
+
+<Run>
+BEGIN;
+UPDATE accounts SET balance = balance - 200 WHERE owner = 'ada';
+ROLLBACK;
+</Run>
+
+That UPDATE violates the `balance >= 0` check constraint and raises an error mid-statement. The transaction goes into the aborted state — you `ROLLBACK` to leave cleanly. None of Ada's balance changed.
+
+## Savepoints: partial rollback
+
+A `SAVEPOINT` is a named mark inside a transaction. `ROLLBACK TO SAVEPOINT x` undoes everything after that mark, but **leaves the transaction itself open** — you can keep going. This is how you implement "try this; if it fails, fall back".
+
+<Run>
+BEGIN;
+UPDATE accounts SET balance = balance + 5 WHERE owner = 'linus';
+SAVEPOINT after_bonus;
+UPDATE accounts SET balance = balance - 999 WHERE owner = 'linus';
+ROLLBACK TO SAVEPOINT after_bonus;
+UPDATE accounts SET balance = balance + 1 WHERE owner = 'linus';
+COMMIT;
+</Run>
+
+What happened: Linus got +5, then a doomed -999 which would've blown the check constraint, then we rewound to `after_bonus` (un-doing the bad UPDATE but keeping the bonus), then nudged +1. Final: Linus is at 100 + 5 + 1 = 106.
+
+<Run>
+SELECT owner, balance FROM accounts ORDER BY owner;
+</Run>
+
+Savepoints are how ORMs and connection-pool middleware implement "try block" semantics inside a longer transaction — and how you can recover from an aborted statement without throwing away the whole transaction.
+
+## How long should a transaction be?
+
+As short as it can be. While a transaction is open, Postgres has to keep around the rows your statements have modified *and* the rows other transactions are modifying, in case you query them. Open transactions block VACUUM from cleaning up dead rows and, in extreme cases, can bloat the database.
+
+Rules of thumb:
+
+- **Don't `BEGIN` and then go do non-database work** (network calls, file I/O, user input). Do that work first, then open the transaction just long enough to write.
+- **Keep the statement count small.** Three or four related writes is normal; thirty is a smell.
+- **Commit on success, rollback on error, never leave a transaction hanging.** This is what `try { ... } finally { rollback if not committed }` patterns in app code are for.
+
+## What you learned
+
+- `BEGIN; ... COMMIT;` groups statements so they apply atomically; other connections see all changes at once or none.
+- `ROLLBACK;` discards everything since `BEGIN`. A statement error puts the transaction in an aborted state until you `ROLLBACK` or `COMMIT` to exit.
+- `BEGIN; UPDATE ...; ROLLBACK;` is a dry-run pattern for destructive statements.
+- `SAVEPOINT name` / `ROLLBACK TO SAVEPOINT name` undo a piece of the transaction without ending it.
+- Keep transactions short — they hold resources and block cleanup until they end.
+
+Up next: combining tables, starting with module 3 and the family of `JOIN`s.

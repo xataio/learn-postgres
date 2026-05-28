@@ -1,0 +1,27 @@
+title: Transactions basics
+summary: BEGIN, COMMIT, ROLLBACK — make a group of statements all-or-nothing — plus savepoints for partial rollback.
+estimatedMinutes: 14
+tags:
+  - transactions
+  - begin
+  - commit
+  - rollback
+  - savepoint
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: transfer-balances-preserved
+    type: query-returns
+    description: After a transferred amount, the two accounts still sum to the original total.
+    sql: SELECT sum(balance)::int FROM accounts
+    expect:
+      rowCount: 1
+      rows: [[300]]
+  - id: ada-balance-after-transfer
+    type: query-returns
+    description: Ada's balance is 80 after sending 20 to Grace inside a committed transaction.
+    sql: SELECT balance FROM accounts WHERE owner = 'ada'
+    expect:
+      rowCount: 1
+      rows: [[80]]
