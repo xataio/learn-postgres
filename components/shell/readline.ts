@@ -2,6 +2,7 @@ import { isStatementComplete } from "./sql-complete";
 
 const PROMPT_PRIMARY = "\x1b[36mlearn=>\x1b[0m ";
 const PROMPT_CONT = "\x1b[2mlearn->\x1b[0m ";
+const PROMPT_WIDTH = 8; // visible width of "learn=> " / "learn-> "
 
 export type ReadlineHandlers = {
   write: (s: string) => void;
@@ -30,6 +31,7 @@ export class Readline {
     private readonly handlers: ReadlineHandlers,
     private readonly getHistory: () => string[],
     private readonly completer: Completer = () => [],
+    private readonly getCols: () => number = () => 80,
   ) {}
 
   setBusy(busy: boolean): void {
@@ -159,53 +161,88 @@ export class Readline {
     }
   }
 
+  // ---------- redraw helpers ----------
+
+  /**
+   * Walk the terminal cursor from its current visual position (computed from
+   * `prevCursor`) back to the prompt's first row, clear to end of screen, and
+   * rewrite the prompt + buffer. This is the only correct way to mutate the
+   * line when it has wrapped across visual rows, since `\b` and `\x1b[D` won't
+   * cross row boundaries on their own.
+   */
+  private redrawLine(prevCursor: number): void {
+    const cols = Math.max(1, this.getCols());
+    const prompt = this.accumulated.length > 0 ? PROMPT_CONT : PROMPT_PRIMARY;
+
+    const prevTotal = PROMPT_WIDTH + prevCursor;
+    const prevRow = Math.floor(prevTotal / cols);
+    this.handlers.write("\r");
+    if (prevRow > 0) this.handlers.write(`\x1b[${prevRow}A`);
+    this.handlers.write("\x1b[J" + prompt + this.buffer);
+
+    const endTotal = PROMPT_WIDTH + this.buffer.length;
+    const targetTotal = PROMPT_WIDTH + this.cursor;
+    this.moveCursorBetween(endTotal, targetTotal, cols);
+  }
+
+  private moveCursorBetween(from: number, to: number, cols: number): void {
+    const fromRow = Math.floor(from / cols);
+    const fromCol = from % cols;
+    const toRow = Math.floor(to / cols);
+    const toCol = to % cols;
+    const dRow = toRow - fromRow;
+    if (dRow > 0) this.handlers.write(`\x1b[${dRow}B`);
+    else if (dRow < 0) this.handlers.write(`\x1b[${-dRow}A`);
+    if (toCol !== fromCol) {
+      this.handlers.write("\r");
+      if (toCol > 0) this.handlers.write(`\x1b[${toCol}C`);
+    }
+  }
+
   // ---------- insertion / deletion ----------
 
   private insert(text: string): void {
+    const prevCursor = this.cursor;
     const before = this.buffer.slice(0, this.cursor);
     const after = this.buffer.slice(this.cursor);
     this.buffer = before + text + after;
     this.cursor += text.length;
-
-    // Write inserted text, then the tail (so it appears past the cursor),
-    // clear anything stale to EOL, then move the cursor back over the tail.
-    this.handlers.write(text + after + "\x1b[K");
-    if (after.length > 0) this.handlers.write(`\x1b[${after.length}D`);
+    this.redrawLine(prevCursor);
   }
 
   private onBackspace(): void {
     if (this.cursor === 0) {
-      // On an empty continuation line, fold back into the previous line so the
-      // user can keep editing it. `\x1b[2K` clears the current line without
-      // moving the cursor, so after `\x1b[A` we're at the same column on the
-      // line above — which lines up with the end of the previous prompt
-      // because both prompts have the same visible width.
+      // On an empty continuation line, fold back into the previous accumulated
+      // line. Move up onto its last visual row (it may wrap), pop it into the
+      // buffer, then redraw from there.
       if (this.buffer.length === 0 && this.accumulated.length > 0) {
         const prev = this.accumulated.pop()!;
+        // Clear current (one-row, empty) continuation prompt and move up one
+        // visual row — that lands us on prev's last visual row.
         this.handlers.write("\x1b[2K\x1b[A");
-        if (prev.length > 0) this.handlers.write(`\x1b[${prev.length}C`);
         this.buffer = prev;
         this.cursor = prev.length;
+        // Tell redrawLine we're at the end of prev so it walks back the right
+        // number of wrapped rows before rewriting.
+        this.redrawLine(prev.length);
       }
       return;
     }
+    const prevCursor = this.cursor;
     const before = this.buffer.slice(0, this.cursor - 1);
     const after = this.buffer.slice(this.cursor);
     this.buffer = before + after;
     this.cursor--;
-    this.handlers.write("\b" + after + " \x1b[K");
-    // We wrote tail + space; cursor is now `after.length + 1` past where it
-    // needs to be.
-    this.handlers.write(`\x1b[${after.length + 1}D`);
+    this.redrawLine(prevCursor);
   }
 
   private deleteForward(): void {
     if (this.cursor >= this.buffer.length) return;
+    const prevCursor = this.cursor;
     const before = this.buffer.slice(0, this.cursor);
     const after = this.buffer.slice(this.cursor + 1);
     this.buffer = before + after;
-    this.handlers.write(after + " \x1b[K");
-    this.handlers.write(`\x1b[${after.length + 1}D`);
+    this.redrawLine(prevCursor);
   }
 
   private onCtrlD(): void {
@@ -215,18 +252,17 @@ export class Readline {
 
   private killToEnd(): void {
     if (this.cursor >= this.buffer.length) return;
+    const prevCursor = this.cursor;
     this.buffer = this.buffer.slice(0, this.cursor);
-    this.handlers.write("\x1b[K");
+    this.redrawLine(prevCursor);
   }
 
   private killToStart(): void {
     if (this.cursor === 0) return;
-    const after = this.buffer.slice(this.cursor);
-    const back = this.cursor;
-    this.buffer = after;
+    const prevCursor = this.cursor;
+    this.buffer = this.buffer.slice(this.cursor);
     this.cursor = 0;
-    this.handlers.write(`\x1b[${back}D` + after + "\x1b[K");
-    if (after.length > 0) this.handlers.write(`\x1b[${after.length}D`);
+    this.redrawLine(prevCursor);
   }
 
   private killPreviousWord(): void {
@@ -235,40 +271,41 @@ export class Readline {
     while (i > 0 && /\s/.test(this.buffer[i - 1])) i--;
     while (i > 0 && /\S/.test(this.buffer[i - 1])) i--;
     if (i === this.cursor) return;
-    const removed = this.cursor - i;
+    const prevCursor = this.cursor;
     const before = this.buffer.slice(0, i);
     const after = this.buffer.slice(this.cursor);
     this.buffer = before + after;
     this.cursor = i;
-    this.handlers.write(`\x1b[${removed}D` + after + "\x1b[K");
-    if (after.length > 0) this.handlers.write(`\x1b[${after.length}D`);
+    this.redrawLine(prevCursor);
   }
 
   // ---------- cursor movement ----------
 
+  private moveCursor(newCursor: number): void {
+    if (newCursor === this.cursor) return;
+    const cols = Math.max(1, this.getCols());
+    const from = PROMPT_WIDTH + this.cursor;
+    const to = PROMPT_WIDTH + newCursor;
+    this.cursor = newCursor;
+    this.moveCursorBetween(from, to, cols);
+  }
+
   private moveLeft(): void {
     if (this.cursor === 0) return;
-    this.cursor--;
-    this.handlers.write("\x1b[D");
+    this.moveCursor(this.cursor - 1);
   }
 
   private moveRight(): void {
     if (this.cursor >= this.buffer.length) return;
-    this.cursor++;
-    this.handlers.write("\x1b[C");
+    this.moveCursor(this.cursor + 1);
   }
 
   private moveHome(): void {
-    if (this.cursor === 0) return;
-    this.handlers.write(`\x1b[${this.cursor}D`);
-    this.cursor = 0;
+    this.moveCursor(0);
   }
 
   private moveEnd(): void {
-    const dist = this.buffer.length - this.cursor;
-    if (dist === 0) return;
-    this.handlers.write(`\x1b[${dist}C`);
-    this.cursor = this.buffer.length;
+    this.moveCursor(this.buffer.length);
   }
 
   private moveWordLeft(): void {
@@ -276,10 +313,7 @@ export class Readline {
     let i = this.cursor;
     while (i > 0 && /\s/.test(this.buffer[i - 1])) i--;
     while (i > 0 && /\S/.test(this.buffer[i - 1])) i--;
-    const delta = this.cursor - i;
-    if (delta === 0) return;
-    this.handlers.write(`\x1b[${delta}D`);
-    this.cursor = i;
+    this.moveCursor(i);
   }
 
   private moveWordRight(): void {
@@ -287,10 +321,7 @@ export class Readline {
     let i = this.cursor;
     while (i < this.buffer.length && /\s/.test(this.buffer[i])) i++;
     while (i < this.buffer.length && /\S/.test(this.buffer[i])) i++;
-    const delta = i - this.cursor;
-    if (delta === 0) return;
-    this.handlers.write(`\x1b[${delta}C`);
-    this.cursor = i;
+    this.moveCursor(i);
   }
 
   // ---------- enter / history / interrupt ----------
@@ -341,11 +372,10 @@ export class Readline {
   }
 
   private replaceBuffer(next: string): void {
-    // Move cursor to start of current buffer, clear to EOL, write new content.
-    if (this.cursor > 0) this.handlers.write(`\x1b[${this.cursor}D`);
-    this.handlers.write("\x1b[K" + next);
+    const prevCursor = this.cursor;
     this.buffer = next;
     this.cursor = next.length;
+    this.redrawLine(prevCursor);
   }
 
   private onCtrlC(): void {
@@ -358,14 +388,12 @@ export class Readline {
   }
 
   private onCtrlL(): void {
-    this.handlers.write("\x1b[2J\x1b[H");
-    this.handlers.write(
-      this.accumulated.length > 0 ? PROMPT_CONT : PROMPT_PRIMARY,
-    );
-    this.handlers.write(this.buffer);
-    if (this.cursor < this.buffer.length) {
-      this.handlers.write(`\x1b[${this.buffer.length - this.cursor}D`);
-    }
+    const cols = Math.max(1, this.getCols());
+    const prompt = this.accumulated.length > 0 ? PROMPT_CONT : PROMPT_PRIMARY;
+    this.handlers.write("\x1b[2J\x1b[H" + prompt + this.buffer);
+    const endTotal = PROMPT_WIDTH + this.buffer.length;
+    const targetTotal = PROMPT_WIDTH + this.cursor;
+    this.moveCursorBetween(endTotal, targetTotal, cols);
   }
 }
 

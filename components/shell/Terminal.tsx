@@ -135,6 +135,7 @@ export function Terminal({ lessonSlug }: Props) {
         },
         loadHistory,
         completer,
+        () => term?.cols ?? 80,
       );
 
       // Warm the cache so the first Tab works without a silent miss.
