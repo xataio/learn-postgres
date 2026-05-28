@@ -214,8 +214,8 @@ export function Terminal({ lessonSlug }: Props) {
   }, [lessonSlug]);
 
   return (
-    <div className="h-full w-full overflow-hidden rounded-lg border border-black/10 bg-[#09090b] dark:border-white/10">
-      <div ref={containerRef} className="h-full w-full p-3" />
+    <div className="h-full w-full overflow-hidden rounded-lg border border-black/10 bg-[#09090b] p-3 dark:border-white/10">
+      <div ref={containerRef} className="h-full w-full" />
     </div>
   );
 }
