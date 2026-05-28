@@ -1,0 +1,32 @@
+title: Deleting rows and row lifecycle
+summary: Remove rows with DELETE, wipe tables with TRUNCATE, and the soft-delete pattern most apps actually use.
+estimatedMinutes: 12
+tags:
+  - delete
+  - truncate
+  - soft-delete
+  - dml
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: dennis-deleted
+    type: query-returns
+    description: Delete Dennis Ritchie's row from users.
+    sql: SELECT count(*)::int FROM users WHERE email = 'dennis@example.com'
+    expect:
+      rowCount: 1
+      rows: [[0]]
+  - id: archived-cleared
+    type: row-count
+    description: Truncate the archived_users table so it's empty.
+    table: archived_users
+    expect:
+      rowCount: 0
+  - id: edsger-soft-deleted
+    type: query-returns
+    description: Soft-delete Edsger Dijkstra by setting deleted_at; the row stays.
+    sql: SELECT (deleted_at IS NOT NULL) FROM users WHERE email = 'edsger@example.com'
+    expect:
+      rowCount: 1
+      rows: [[true]]
