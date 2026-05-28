@@ -122,7 +122,16 @@ export class Readline {
     }
 
     if (seq === "\t") return this.onTab();
-    if (seq.startsWith("\x1b")) return; // unknown escape, ignore
+    if (seq.startsWith("\x1b")) {
+      // Some keyboard layouts (e.g. Spanish/German on macOS) require Option to
+      // produce characters like `@` or `\`, and the terminal can deliver those
+      // as `Esc <char>`. Treat an unknown Alt-printable as the bare character
+      // so meta commands like `\d` and email-style input still work.
+      if (seq.length === 2 && seq[1] >= " " && seq[1] !== "\x7f") {
+        return this.insert(seq[1]);
+      }
+      return;
+    }
     if (seq < " ") return;
 
     this.insert(seq);
@@ -165,7 +174,21 @@ export class Readline {
   }
 
   private onBackspace(): void {
-    if (this.cursor === 0) return;
+    if (this.cursor === 0) {
+      // On an empty continuation line, fold back into the previous line so the
+      // user can keep editing it. The prompts are the same visible width, so
+      // a plain `\x1b[A` after clearing keeps the cursor in column 8 (just
+      // past the prompt); we then walk forward to the end of the restored
+      // buffer.
+      if (this.buffer.length === 0 && this.accumulated.length > 0) {
+        const prev = this.accumulated.pop()!;
+        this.handlers.write("\r\x1b[K\x1b[A");
+        if (prev.length > 0) this.handlers.write(`\x1b[${prev.length}C`);
+        this.buffer = prev;
+        this.cursor = prev.length;
+      }
+      return;
+    }
     const before = this.buffer.slice(0, this.cursor - 1);
     const after = this.buffer.slice(this.cursor);
     this.buffer = before + after;
