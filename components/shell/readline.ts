@@ -176,13 +176,13 @@ export class Readline {
   private onBackspace(): void {
     if (this.cursor === 0) {
       // On an empty continuation line, fold back into the previous line so the
-      // user can keep editing it. The prompts are the same visible width, so
-      // a plain `\x1b[A` after clearing keeps the cursor in column 8 (just
-      // past the prompt); we then walk forward to the end of the restored
-      // buffer.
+      // user can keep editing it. `\x1b[2K` clears the current line without
+      // moving the cursor, so after `\x1b[A` we're at the same column on the
+      // line above — which lines up with the end of the previous prompt
+      // because both prompts have the same visible width.
       if (this.buffer.length === 0 && this.accumulated.length > 0) {
         const prev = this.accumulated.pop()!;
-        this.handlers.write("\r\x1b[K\x1b[A");
+        this.handlers.write("\x1b[2K\x1b[A");
         if (prev.length > 0) this.handlers.write(`\x1b[${prev.length}C`);
         this.buffer = prev;
         this.cursor = prev.length;
