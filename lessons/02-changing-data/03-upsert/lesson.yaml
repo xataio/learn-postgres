@@ -1,0 +1,34 @@
+title: Upsert with ON CONFLICT
+summary: Insert-or-update in a single statement — INSERT … ON CONFLICT DO UPDATE / DO NOTHING, and how to use EXCLUDED.
+estimatedMinutes: 12
+tags:
+  - insert
+  - on-conflict
+  - upsert
+  - excluded
+  - dml
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: ada-page-views-incremented
+    type: query-returns
+    description: Upserting Ada's page view brings her count to 2.
+    sql: SELECT views FROM page_views WHERE page = '/home' AND user_email = 'ada@example.com'
+    expect:
+      rowCount: 1
+      rows: [[2]]
+  - id: new-page-view-inserted
+    type: query-returns
+    description: Upserting a brand-new (page, user_email) pair inserts it with views = 1.
+    sql: SELECT views FROM page_views WHERE page = '/pricing' AND user_email = 'newbie@example.com'
+    expect:
+      rowCount: 1
+      rows: [[1]]
+  - id: dedup-do-nothing
+    type: query-returns
+    description: DO NOTHING swallowed the duplicate — 'postgres' still appears exactly once.
+    sql: SELECT count(*)::int FROM tags WHERE name = 'postgres'
+    expect:
+      rowCount: 1
+      rows: [[1]]
