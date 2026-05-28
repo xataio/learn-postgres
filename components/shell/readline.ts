@@ -168,35 +168,45 @@ export class Readline {
    * `prevCursor`) back to the prompt's first row, clear to end of screen, and
    * rewrite the prompt + buffer. This is the only correct way to mutate the
    * line when it has wrapped across visual rows, since `\b` and `\x1b[D` won't
-   * cross row boundaries on their own.
+   * cross row boundaries on their own. The whole sequence is sent as a single
+   * write so xterm renders just the final state — no intermediate cursor
+   * flicker at the prompt.
    */
-  private redrawLine(prevCursor: number): void {
+  private redrawLine(prevCursor: number, prefix = ""): void {
     const cols = Math.max(1, this.getCols());
     const prompt = this.accumulated.length > 0 ? PROMPT_CONT : PROMPT_PRIMARY;
 
     const prevTotal = PROMPT_WIDTH + prevCursor;
     const prevRow = Math.floor(prevTotal / cols);
-    this.handlers.write("\r");
-    if (prevRow > 0) this.handlers.write(`\x1b[${prevRow}A`);
-    this.handlers.write("\x1b[J" + prompt + this.buffer);
-
     const endTotal = PROMPT_WIDTH + this.buffer.length;
     const targetTotal = PROMPT_WIDTH + this.cursor;
-    this.moveCursorBetween(endTotal, targetTotal, cols);
+
+    let out = prefix + "\r";
+    if (prevRow > 0) out += `\x1b[${prevRow}A`;
+    out += "\x1b[J" + prompt + this.buffer;
+    out += this.cursorMoveSeq(endTotal, targetTotal, cols);
+    this.handlers.write(out);
   }
 
   private moveCursorBetween(from: number, to: number, cols: number): void {
+    const seq = this.cursorMoveSeq(from, to, cols);
+    if (seq) this.handlers.write(seq);
+  }
+
+  private cursorMoveSeq(from: number, to: number, cols: number): string {
     const fromRow = Math.floor(from / cols);
     const fromCol = from % cols;
     const toRow = Math.floor(to / cols);
     const toCol = to % cols;
+    let seq = "";
     const dRow = toRow - fromRow;
-    if (dRow > 0) this.handlers.write(`\x1b[${dRow}B`);
-    else if (dRow < 0) this.handlers.write(`\x1b[${-dRow}A`);
+    if (dRow > 0) seq += `\x1b[${dRow}B`;
+    else if (dRow < 0) seq += `\x1b[${-dRow}A`;
     if (toCol !== fromCol) {
-      this.handlers.write("\r");
-      if (toCol > 0) this.handlers.write(`\x1b[${toCol}C`);
+      seq += "\r";
+      if (toCol > 0) seq += `\x1b[${toCol}C`;
     }
+    return seq;
   }
 
   // ---------- insertion / deletion ----------
@@ -217,14 +227,13 @@ export class Readline {
       // buffer, then redraw from there.
       if (this.buffer.length === 0 && this.accumulated.length > 0) {
         const prev = this.accumulated.pop()!;
-        // Clear current (one-row, empty) continuation prompt and move up one
-        // visual row — that lands us on prev's last visual row.
-        this.handlers.write("\x1b[2K\x1b[A");
         this.buffer = prev;
         this.cursor = prev.length;
-        // Tell redrawLine we're at the end of prev so it walks back the right
-        // number of wrapped rows before rewriting.
-        this.redrawLine(prev.length);
+        // Clear the (single-row, empty) continuation prompt and step up onto
+        // prev's last visual row, then let redrawLine walk back the rest of
+        // prev's wrapped rows and rewrite. All emitted as one write to avoid
+        // a render flicker at the cleared row.
+        this.redrawLine(prev.length, "\x1b[2K\x1b[A");
       }
       return;
     }
