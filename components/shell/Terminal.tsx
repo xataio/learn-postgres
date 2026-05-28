@@ -135,6 +135,7 @@ export function Terminal({ lessonSlug }: Props) {
         },
         loadHistory,
         completer,
+        () => term?.cols ?? 80,
       );
 
       // Warm the cache so the first Tab works without a silent miss.
@@ -142,6 +143,32 @@ export function Terminal({ lessonSlug }: Props) {
 
       write(BANNER);
       readline.start();
+
+      // macOS keyboards with non-US layouts produce characters like `@` and
+      // `\` via Option-modified keys (e.g. Option+2 → `@` on Spanish). xterm.js
+      // drops these: its keydown handler bails on Alt+key when macOptionIsMeta
+      // is false, and its input-event handler filters out events that overlap
+      // with a keydown. Intercept here and feed the typed character to the
+      // readline directly.
+      const isMac =
+        typeof navigator !== "undefined" &&
+        /mac/i.test(navigator.platform || navigator.userAgent);
+      term.attachCustomKeyEventHandler((event) => {
+        if (
+          isMac &&
+          event.type === "keydown" &&
+          event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          event.key.length === 1 &&
+          event.key >= " "
+        ) {
+          event.preventDefault();
+          readline.handleData(event.key);
+          return false;
+        }
+        return true;
+      });
 
       dataDisposable = term.onData((d) => readline.handleData(d));
 
@@ -188,8 +215,8 @@ export function Terminal({ lessonSlug }: Props) {
   }, [lessonSlug]);
 
   return (
-    <div className="h-full w-full overflow-hidden rounded-lg border border-black/10 bg-[#09090b] dark:border-white/10">
-      <div ref={containerRef} className="h-full w-full p-3" />
+    <div className="h-full w-full overflow-hidden rounded-lg border border-black/10 bg-[#09090b] p-3 dark:border-white/10">
+      <div ref={containerRef} className="h-full w-full" />
     </div>
   );
 }
