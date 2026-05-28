@@ -1,0 +1,128 @@
+The previous lesson covered `INNER JOIN` and `LEFT JOIN` — the two you'll use most. This one rounds out the family: `RIGHT`, `FULL`, `CROSS`, and the trick of joining a table to itself.
+
+The seed has a small organization: `employees` (with a `manager_id` pointing back into the same table) and `departments` (one of which has no employees). There are also two tiny `shirt_sizes`/`shirt_colors` tables for the CROSS JOIN example.
+
+## RIGHT JOIN: LEFT JOIN, mirrored
+
+`RIGHT JOIN` keeps every row from the *right* table, NULL-padding the left when there's no match. It's `LEFT JOIN` with the tables swapped — and that's almost always how people write it instead, because reading order matters.
+
+<Run>
+SELECT d.name AS department, e.full_name
+FROM employees e
+RIGHT JOIN departments d ON d.id = e.department_id
+ORDER BY d.name, e.full_name;
+</Run>
+
+Operations has no employees — it shows up with `full_name` as NULL. Same shape if you reversed the tables and used `LEFT JOIN`. In practice: pick `LEFT` and put the "keep all of these" table on the left. Reads more naturally.
+
+## FULL JOIN: keep both sides
+
+`FULL OUTER JOIN` (the `OUTER` is optional) keeps **every** row from both tables: matched pairs where possible, plus left rows with no right match, plus right rows with no left match — each padded with NULLs on the side that didn't have a partner.
+
+<Run>
+SELECT e.full_name, d.name AS department
+FROM employees e
+FULL JOIN departments d ON d.id = e.department_id
+ORDER BY e.full_name NULLS LAST, d.name;
+</Run>
+
+Three flavors in the result:
+
+- Most rows: an employee with a department.
+- Edsger and Donald (contractors): `department` is NULL.
+- Operations: `full_name` is NULL.
+
+`FULL JOIN` shines when you need a single result that reconciles two sources — "all the things we know about, from either side, no matter which side knew about them".
+
+### Finding the "only-one-side" rows
+
+A `FULL JOIN` filtered to rows where one side is NULL gives you the asymmetric difference: things on the left with no match, or vice versa. Combine both NULL checks for "rows missing from one or both sides":
+
+<Run>
+SELECT e.full_name, d.name AS department
+FROM employees e
+FULL JOIN departments d ON d.id = e.department_id
+WHERE e.id IS NULL OR e.department_id IS NULL;
+</Run>
+
+Useful for reconciling: "who's missing from the departments table?", "which departments have nobody assigned?"
+
+## CROSS JOIN: every row paired with every row
+
+`CROSS JOIN` is the Cartesian product — no `ON` clause, every left row paired with every right row. Result size is `left × right`.
+
+<Run>
+SELECT size, color
+FROM shirt_sizes
+CROSS JOIN shirt_colors
+ORDER BY size, color;
+</Run>
+
+Three sizes × three colors = nine combinations. Nine shirts to stock. CROSS JOIN earns its keep for:
+
+- **Generating combinations** (sizes × colors, dates × users, regions × products).
+- **Pairing every row with a single-row computation** — `CROSS JOIN (SELECT now() AS t)` injects the current time alongside every row.
+- **`generate_series` plus a table** — fill in missing days in a time series.
+
+The two implicit-comma forms (`FROM a, b`) and `CROSS JOIN a, b` are equivalent, but `CROSS JOIN` makes the intent explicit. Never accidentally CROSS JOIN a large table — millions × millions is a long afternoon.
+
+## Self-join: a table joined to itself
+
+When rows have relationships to *other rows in the same table*, you join the table to itself with a different alias for each "side". The classic example is an employee/manager hierarchy.
+
+<Run>
+SELECT e.full_name AS employee, m.full_name AS manager
+FROM employees e
+LEFT JOIN employees m ON m.id = e.manager_id
+ORDER BY m.full_name NULLS FIRST, e.full_name;
+</Run>
+
+Two aliases for the same table — `e` is the row we're describing, `m` is the row we're looking up. The `LEFT JOIN` keeps Ada in the result even though her `manager_id` is NULL (she's at the top).
+
+Self-joins also handle peers (employees in the same department) and chains (manager's manager). For *deep* recursion — "everyone underneath Ada, however many levels down" — you reach for a recursive CTE, which is its own future lesson.
+
+## Multi-table joins
+
+Each `JOIN` adds one more table. The query reads top-to-bottom as a pipeline: start with a row, attach a related row, then another.
+
+<Run>
+SELECT e.full_name AS employee,
+       m.full_name AS manager,
+       d.name      AS department
+FROM employees e
+LEFT JOIN employees   m ON m.id = e.manager_id
+LEFT JOIN departments d ON d.id = e.department_id
+ORDER BY d.name NULLS LAST, e.full_name;
+</Run>
+
+Three tables (two of them the same table aliased differently), one result. The `LEFT JOIN` on departments keeps the contractors in the listing even though they have no department.
+
+## When to use which
+
+A useful mental table:
+
+| You want…                                                    | Use            |
+| ------------------------------------------------------------ | -------------- |
+| Rows that match on both sides                                | `INNER JOIN`   |
+| All rows from the left, matches from the right where present | `LEFT JOIN`    |
+| Same, but with the tables in the other order                 | `RIGHT JOIN`   |
+| All rows from both sides, NULLs where they don't match       | `FULL JOIN`    |
+| Every combination of left × right                            | `CROSS JOIN`   |
+| A row's relationship to other rows in the same table         | self-join      |
+
+A working rule: prefer `LEFT` over `RIGHT` so the "keep all" table is on the left. Reach for `FULL` only when both sides legitimately matter. Use `CROSS` deliberately — never by accident.
+
+## What you learned
+
+- `RIGHT JOIN` = `LEFT JOIN` with the tables flipped; pick one shape and stick with it.
+- `FULL OUTER JOIN` keeps unmatched rows from both sides, NULL-padded.
+- `WHERE side.id IS NULL` filters down to the asymmetric difference — "missing on this side".
+- `CROSS JOIN` is the Cartesian product; useful for generating combinations, deadly by accident.
+- Self-joins use two aliases for the same table — the standard pattern for parent/child within one table.
+- Chain `JOIN`s to bring in more tables; read top-to-bottom as a pipeline.
+
+<Check id="seed-loaded">
+Mark this lesson done — we'll just confirm the sandbox is healthy.
+</Check>
+
+Up next: combining results vertically with `UNION`, `INTERSECT`, and `EXCEPT`.
