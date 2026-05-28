@@ -1,0 +1,129 @@
+Lesson 01 introduced `ORDER BY` and `LIMIT`. This lesson goes deeper: stable sorts, dropping duplicates, and the two ways to page through a result set — including why one of them quietly breaks in production.
+
+The seed loaded an `articles` table — 30 rows, several authors, and a few intentional ties on `published_at`.
+
+## `ORDER BY`: pick a direction
+
+`ORDER BY col` sorts ascending (small to large, oldest first). Add `DESC` to flip it.
+
+<Run>
+SELECT title, views
+FROM articles
+ORDER BY views DESC
+LIMIT 5;
+</Run>
+
+The top-5 most-viewed posts. Without `LIMIT 5`, you'd get all 30, sorted.
+
+## Tie-breakers
+
+What happens when two rows have the same sort key? Postgres returns them in *some* order — but which one is implementation-defined. If the order matters, spell out a tie-breaker.
+
+<Run>
+SELECT title, author, published_at
+FROM articles
+ORDER BY published_at, id;
+</Run>
+
+`published_at` has duplicates (Ada's two articles, Grace's first two — see the seed). Adding `id` as a second sort key makes the result *deterministic*: same query, same order, every time. For pagination this isn't optional — it's a correctness requirement, as we'll see in a minute.
+
+## `NULLS FIRST` / `NULLS LAST`
+
+Postgres puts `NULL`s **last** in ascending sorts and **first** in descending sorts. Override with `NULLS FIRST` or `NULLS LAST` when you want the opposite — most often when you want "newest first, but missing dates at the bottom".
+
+```sql
+SELECT title, published_at
+FROM articles
+ORDER BY published_at DESC NULLS LAST;
+```
+
+The seed has no NULLs in `published_at`, so the syntax is the takeaway here.
+
+## `DISTINCT`: drop duplicate rows
+
+`DISTINCT` removes duplicate rows from the result. It's a post-processing step on whatever the `SELECT` list produced.
+
+<Run>
+SELECT DISTINCT author
+FROM articles
+ORDER BY author;
+</Run>
+
+Twelve articles came from a handful of repeat authors — `DISTINCT` collapses them. Note `DISTINCT` is *across all selected columns*, not just one: `SELECT DISTINCT author, published_at` would keep two rows from the same author on different days.
+
+### `DISTINCT ON (...)`: one row per group, Postgres-flavored
+
+`DISTINCT ON (col)` is a Postgres extension: "one row per distinct value of `col`, and you pick which one with `ORDER BY`". Handy for "the latest article per author":
+
+<Run>
+SELECT DISTINCT ON (author) author, title, published_at
+FROM articles
+ORDER BY author, published_at DESC;
+</Run>
+
+The first column(s) in the `ORDER BY` must match the `DISTINCT ON` list — that's the rule that lets Postgres pick "the first row per group". Inside each author, `published_at DESC` chooses the newest.
+
+## `LIMIT` and `OFFSET`: the obvious way to paginate
+
+`LIMIT N OFFSET M` says "skip M rows, then return N". The classic page-2-of-10 query:
+
+<Run>
+SELECT id, title, published_at
+FROM articles
+ORDER BY published_at DESC, id DESC
+LIMIT 10 OFFSET 10;
+</Run>
+
+That's page 2 (rows 11–20). Page 3 would be `OFFSET 20`. Simple, and the right tool for small result sets.
+
+## The `OFFSET` trap
+
+`OFFSET M` makes Postgres fetch *and discard* M rows before returning anything. On page 1 that's free. On page 1000 of a million-row feed, you're scanning a million rows to throw away 999,990 of them.
+
+There's a subtler bug too: if a new row gets inserted between requesting page 1 and page 2, page 2 will repeat a row from page 1 (because everything shifted down by one). The result set isn't stable across requests.
+
+For small admin tables, `OFFSET` is fine. For user-facing feeds, infinite scroll, or anything that paginates deeply, reach for keyset pagination.
+
+## Keyset pagination: page by `WHERE`
+
+Idea: instead of "skip 10,000 rows", remember the *last row you saw* and ask for "rows after that one". With a deterministic `ORDER BY`, that's just a `WHERE` clause.
+
+Page 1:
+
+<Run>
+SELECT id, title, published_at
+FROM articles
+ORDER BY published_at DESC, id DESC
+LIMIT 5;
+</Run>
+
+Note the last row's `published_at` and `id`. To get the next page, plug them into a `WHERE` filter that asks for everything strictly after that key:
+
+<Run>
+SELECT id, title, published_at
+FROM articles
+WHERE (published_at, id) < ('2024-06-24 08:30:00+00', 26)
+ORDER BY published_at DESC, id DESC
+LIMIT 5;
+</Run>
+
+Two important details:
+
+1. **The tuple comparison `(a, b) < (x, y)`** does lexicographic ordering — `a < x`, OR `a = x AND b < y`. That's exactly the tie-breaker logic we wrote into `ORDER BY`. They have to match.
+2. **No `OFFSET`**. Each page is a fresh `WHERE` lookup that an index on `(published_at DESC, id DESC)` can serve in constant time, no matter how deep you go.
+
+The downside: you can't jump to "page 42" — you walk forward one page at a time. For feeds and infinite scroll that's fine; for an admin grid with a page picker, `OFFSET` is the easier fit.
+
+## What you learned
+
+- `ORDER BY` sorts; add `DESC` and `NULLS FIRST`/`LAST` as needed.
+- Always include a tie-breaker (typically the primary key) for deterministic order.
+- `DISTINCT` drops duplicate rows; `DISTINCT ON (col)` picks one row per group, chosen by `ORDER BY`.
+- `LIMIT N OFFSET M` is the obvious way to paginate — and gets slow and unstable on deep pages.
+- Keyset pagination (`WHERE (key) < (last_seen)`) pages in constant time and survives concurrent inserts.
+
+<Check id="seed-loaded">
+Mark this lesson done — we'll just confirm the sandbox is healthy.
+</Check>
+
+Up next: collapsing rows into summaries with aggregations and `GROUP BY`.
