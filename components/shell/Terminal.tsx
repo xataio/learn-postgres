@@ -143,6 +143,32 @@ export function Terminal({ lessonSlug }: Props) {
       write(BANNER);
       readline.start();
 
+      // macOS keyboards with non-US layouts produce characters like `@` and
+      // `\` via Option-modified keys (e.g. Option+2 → `@` on Spanish). xterm.js
+      // drops these: its keydown handler bails on Alt+key when macOptionIsMeta
+      // is false, and its input-event handler filters out events that overlap
+      // with a keydown. Intercept here and feed the typed character to the
+      // readline directly.
+      const isMac =
+        typeof navigator !== "undefined" &&
+        /mac/i.test(navigator.platform || navigator.userAgent);
+      term.attachCustomKeyEventHandler((event) => {
+        if (
+          isMac &&
+          event.type === "keydown" &&
+          event.altKey &&
+          !event.ctrlKey &&
+          !event.metaKey &&
+          event.key.length === 1 &&
+          event.key >= " "
+        ) {
+          event.preventDefault();
+          readline.handleData(event.key);
+          return false;
+        }
+        return true;
+      });
+
       dataDisposable = term.onData((d) => readline.handleData(d));
 
       const fitNow = () => {
