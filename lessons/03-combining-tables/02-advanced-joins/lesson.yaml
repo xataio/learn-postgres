@@ -1,0 +1,19 @@
+title: Advanced joins
+summary: RIGHT, FULL, and CROSS joins, self-joins for hierarchies, and chaining joins across many tables.
+estimatedMinutes: 14
+tags:
+  - join
+  - right-join
+  - full-join
+  - cross-join
+  - self-join
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: seed-loaded
+    type: row-count
+    description: The seeded employees table has 12 rows — click to mark this lesson done.
+    table: employees
+    expect:
+      rowCount: 12
