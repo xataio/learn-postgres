@@ -1,0 +1,128 @@
+`INSERT` and `UPDATE` cover adding and changing rows; the third DML statement is `DELETE`. This lesson covers the basics, the `TRUNCATE` shortcut, and why most real applications don't actually delete much.
+
+The seed has a `users` table (with a `deleted_at` column for the soft-delete pattern) and a small `archived_users` staging table you'll wipe with `TRUNCATE`.
+
+## DELETE: remove rows by predicate
+
+The shape mirrors `UPDATE`: `DELETE FROM <table> WHERE <predicate>;`
+
+<Run>
+DELETE FROM users
+WHERE email = 'dennis@example.com';
+</Run>
+
+<Check id="dennis-deleted">
+Delete Dennis Ritchie's row.
+</Check>
+
+The `WHERE` is doing all the work. **Omit it and you delete every row in the table** — Postgres won't ask twice. Get into the habit of writing the `SELECT` first to confirm the predicate matches what you expect, *then* swap `SELECT *` for `DELETE`.
+
+## `RETURNING` works here too
+
+Same trick as `UPDATE`: see exactly what you just deleted.
+
+<Run>
+DELETE FROM users
+WHERE is_active = false
+RETURNING id, full_name, email;
+</Run>
+
+Two rows come back — Edsger and Don, the remaining inactive users. (Dennis was already gone from the previous step.) In production this is gold for audit logs.
+
+## DELETE vs UPDATE: foreign keys complicate things
+
+A `DELETE` that violates a foreign key reference fails by default. If `orders.user_id` references `users.id`, you can't delete a user that still has orders — Postgres will raise an error.
+
+The schema decides the policy at the FK definition: `ON DELETE CASCADE` (delete the orders too), `ON DELETE SET NULL` (orphan them), or the default `NO ACTION` (refuse). We'll touch this in the constraints lesson; for now just know that DELETE isn't always a one-liner.
+
+## TRUNCATE: wipe a whole table, fast
+
+When you want every row gone, `TRUNCATE` is faster than `DELETE` because it bypasses the row-by-row machinery and just resets the table's storage.
+
+<Run>
+TRUNCATE TABLE archived_users;
+</Run>
+
+<Check id="archived-cleared">
+After `TRUNCATE`, `archived_users` has 0 rows.
+</Check>
+
+Three things to know about `TRUNCATE`:
+
+1. It **can't be filtered** — there's no `WHERE`. It's all or nothing.
+2. It **doesn't fire row-level triggers** by default (an old gotcha for audit setups).
+3. It **does** fire statement-level triggers and is transactional, so a `TRUNCATE` inside a `BEGIN ... ROLLBACK` is undone like any other change.
+
+For occasional cleanup of small tables, `DELETE` is fine. `TRUNCATE` earns its keep on tables with hundreds of thousands of rows.
+
+### Resetting sequences
+
+By default `TRUNCATE` doesn't touch the `serial` sequence — the next inserted row keeps its previous `id`. Pass `RESTART IDENTITY` to reset:
+
+```sql
+TRUNCATE TABLE archived_users RESTART IDENTITY;
+```
+
+Useful for test fixtures; rarely what you want in production, where stable ids matter even after a wipe.
+
+## Soft deletes: don't actually delete
+
+Most production apps don't `DELETE` user-facing data. They mark it deleted and filter it out at read time. Reasons: foreign keys keep working, audit trails stay intact, "oops, undo" is one update away, and compliance teams stop sending you angry emails.
+
+The minimum schema is a nullable timestamp:
+
+```sql
+ALTER TABLE users ADD COLUMN deleted_at timestamptz;
+```
+
+Already in the seed. "Deleting" is now an `UPDATE`:
+
+<Run>
+UPDATE users
+SET deleted_at = now()
+WHERE email = 'edsger@example.com';
+</Run>
+
+<Check id="edsger-soft-deleted">
+Soft-delete Edsger by setting `deleted_at` — the row is still there, just marked.
+</Check>
+
+Reads then filter live rows:
+
+<Run>
+SELECT id, full_name, deleted_at
+FROM users
+WHERE deleted_at IS NULL;
+</Run>
+
+That `WHERE deleted_at IS NULL` is the cost: every query that should see only live users has to remember to add it. Common solutions are (1) wrap the table in a view, (2) use row-level security, or (3) just be disciplined. We'll meet views and RLS later in the course.
+
+### Undoing a soft delete
+
+Trivial: set the column back to `NULL`.
+
+<Run>
+UPDATE users
+SET deleted_at = NULL
+WHERE email = 'edsger@example.com';
+</Run>
+
+That's the *real* reason soft delete is popular — undoing a hard `DELETE` means restoring from a backup.
+
+## When to actually hard-delete
+
+- **Personal data under a "right to be forgotten" request.** Soft delete leaves data in the database; legal usually requires it gone.
+- **High-churn ephemeral tables** — session rows, throwaway job queues, audit trim. Soft delete just grows forever.
+- **Test data and fixtures.**
+
+A reasonable default: soft-delete user-facing entities, hard-delete operational rubbish. Keep the policy explicit in the schema.
+
+## What you learned
+
+- `DELETE FROM ... WHERE ...` — the `WHERE` is critical; without it you wipe the table.
+- `RETURNING` echoes the deleted rows back, same as on `UPDATE` and `INSERT`.
+- Foreign keys may block a delete or cascade it, depending on the FK's `ON DELETE` action.
+- `TRUNCATE` clears a whole table fast; no `WHERE`, transactional, skips row-level triggers, optional `RESTART IDENTITY`.
+- The soft-delete pattern (`deleted_at timestamptz` + `WHERE deleted_at IS NULL`) is what most apps reach for in practice.
+
+Up next: handling the race between two writers with `INSERT … ON CONFLICT` — upsert without tears.
