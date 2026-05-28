@@ -175,14 +175,6 @@ export function Terminal({ lessonSlug }: Props) {
       const fitNow = () => {
         try {
           fit?.fit();
-          // FitAddon reserves 14px for the scrollbar, but the renderer rounds
-          // the canvas width up to whole device pixels (`DomRenderer.ts:124`),
-          // which can push the rendered screen 1–2 logical pixels wider than
-          // FitAddon assumed — enough to slide the last character behind the
-          // scrollbar overlay. Shave one column for safety.
-          if (term && term.cols > 2) {
-            term.resize(term.cols - 1, term.rows);
-          }
         } catch {
           /* container not yet sized */
         }
