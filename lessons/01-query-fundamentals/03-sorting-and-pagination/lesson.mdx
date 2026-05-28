@@ -31,13 +31,13 @@ ORDER BY published_at, id;
 
 Postgres puts `NULL`s **last** in ascending sorts and **first** in descending sorts. Override with `NULLS FIRST` or `NULLS LAST` when you want the opposite — most often when you want "newest first, but missing dates at the bottom".
 
-```sql
+<Run>
 SELECT title, published_at
 FROM articles
 ORDER BY published_at DESC NULLS LAST;
-```
+</Run>
 
-The seed has no NULLs in `published_at`, so the syntax is the takeaway here.
+The seed now includes a couple of `NULL` `published_at` values so you can see this directly.
 
 ## `DISTINCT`: drop duplicate rows
 
@@ -70,7 +70,7 @@ The first column(s) in the `ORDER BY` must match the `DISTINCT ON` list — that
 <Run>
 SELECT id, title, published_at
 FROM articles
-ORDER BY published_at DESC, id DESC
+ORDER BY published_at DESC NULLS LAST, id DESC
 LIMIT 10 OFFSET 10;
 </Run>
 
@@ -93,7 +93,7 @@ Page 1:
 <Run>
 SELECT id, title, published_at
 FROM articles
-ORDER BY published_at DESC, id DESC
+ORDER BY published_at DESC NULLS LAST, id DESC
 LIMIT 5;
 </Run>
 
@@ -103,7 +103,7 @@ Note the last row's `published_at` and `id`. To get the next page, plug them int
 SELECT id, title, published_at
 FROM articles
 WHERE (published_at, id) < ('2024-06-24 08:30:00+00', 26)
-ORDER BY published_at DESC, id DESC
+ORDER BY published_at DESC NULLS LAST, id DESC
 LIMIT 5;
 </Run>
 

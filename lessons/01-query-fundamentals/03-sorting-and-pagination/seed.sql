@@ -7,7 +7,7 @@ CREATE TABLE articles (
   title        text NOT NULL,
   author       text NOT NULL,
   views        int  NOT NULL,
-  published_at timestamptz NOT NULL
+  published_at timestamptz
 );
 
 INSERT INTO articles (title, author, views, published_at) VALUES
@@ -25,7 +25,7 @@ INSERT INTO articles (title, author, views, published_at) VALUES
   ('Window functions in anger',   'Margaret Hamilton', 3380, '2024-03-18 13:20:00+00'),
   ('Reading EXPLAIN ANALYZE',     'Grace Hopper',      4710, '2024-03-25 13:20:00+00'),
   ('Vacuum and bloat',            'Dennis Ritchie',     430, '2024-04-01 07:00:00+00'),
-  ('A small note on COLLATE',     'Bjarne Stroustrup',  210, '2024-04-08 18:00:00+00'),
+  ('A small note on COLLATE',     'Bjarne Stroustrup',  210, NULL),
   ('GIN vs GiST',                 'Donald Knuth',      1990, '2024-04-15 10:00:00+00'),
   ('Trigram search basics',       'Ken Thompson',       870, '2024-04-22 10:00:00+00'),
   ('CTEs are not optimization fences anymore','Linus Torvalds', 2540, '2024-04-29 15:15:00+00'),
@@ -40,4 +40,4 @@ INSERT INTO articles (title, author, views, published_at) VALUES
   ('Generated columns: hidden gems','Dennis Ritchie',  1240, '2024-07-01 17:00:00+00'),
   ('Foreign keys revisited',      'Ken Thompson',      1080, '2024-07-08 17:00:00+00'),
   ('Locking, lightly',            'Edsger Dijkstra',   1340, '2024-07-15 12:30:00+00'),
-  ('How autovacuum keeps you sane','Margaret Hamilton', 980, '2024-07-22 12:30:00+00');
+  ('How autovacuum keeps you sane','Margaret Hamilton', 980, NULL);
