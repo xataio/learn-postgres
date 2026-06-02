@@ -1,0 +1,19 @@
+title: Sorting and pagination
+summary: Order results predictably, drop duplicates with DISTINCT, and page through with LIMIT/OFFSET — and why keyset pagination is the better default.
+estimatedMinutes: 12
+tags:
+  - order-by
+  - distinct
+  - limit
+  - offset
+  - pagination
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: seed-loaded
+    type: row-count
+    description: The seeded articles table has 30 rows — click to mark this lesson done.
+    table: articles
+    expect:
+      rowCount: 30

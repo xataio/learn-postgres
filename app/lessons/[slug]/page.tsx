@@ -3,6 +3,7 @@ import Link from "next/link";
 import { headers } from "next/headers";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import remarkGfm from "remark-gfm";
 import { auth } from "@/lib/auth";
 import { getAllLessons, getLesson } from "@/lib/lessons";
 import { buildLessonComponents } from "@/components/lesson/mdx-components";
@@ -88,7 +89,7 @@ export default async function LessonPage({
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <article className="prose prose-zinc dark:prose-invert">
-          <MDXRemote source={lesson.mdxSource} components={components} />
+          <MDXRemote source={lesson.mdxSource} components={components} options={{ mdxOptions: { remarkPlugins: [remarkGfm] } }} />
 
           {(prev || next) && (
             <nav
