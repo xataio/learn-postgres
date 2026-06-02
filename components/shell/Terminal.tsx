@@ -4,7 +4,7 @@ import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
 import { Readline } from "./readline";
 import { clearHistory, loadHistory, pushHistory } from "./history";
-import { expandMeta } from "./meta";
+import { expandMeta, META_COMMANDS } from "./meta";
 import type { MetaResult } from "./meta";
 import {
   formatClientError,
@@ -125,6 +125,11 @@ export function Terminal({ lessonSlug }: Props) {
       };
 
       const completer = (prefix: string): string[] => {
+        // Backslash commands complete against the static meta-command list
+        // (case-sensitive, since \dt and \dT differ).
+        if (prefix.startsWith("\\")) {
+          return META_COMMANDS.filter((c) => c.startsWith(prefix));
+        }
         if (tablesCache.length === 0) {
           refreshTables();
           return [];

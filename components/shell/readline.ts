@@ -142,6 +142,8 @@ export class Readline {
   private onTab(): void {
     let i = this.cursor;
     while (i > 0 && /[A-Za-z0-9_]/.test(this.buffer[i - 1])) i--;
+    // Include a leading backslash so meta-command names (e.g. \dt) complete.
+    if (i > 0 && this.buffer[i - 1] === "\\") i--;
     const prefix = this.buffer.slice(i, this.cursor);
     if (!prefix) return;
 
@@ -158,7 +160,21 @@ export class Readline {
     const lcp = longestCommonPrefix(matches);
     if (lcp.length > prefix.length) {
       this.insert(lcp.slice(prefix.length));
+      return;
     }
+    // Ambiguous with no further shared prefix: list the candidates, then
+    // restore the prompt and the line being edited.
+    this.listCompletions(matches);
+  }
+
+  private listCompletions(matches: string[]): void {
+    const cols = Math.max(1, this.getCols());
+    const prompt = this.accumulated.length > 0 ? PROMPT_CONT : PROMPT_PRIMARY;
+    let out = "\r\n" + matches.join("   ") + "\r\n" + prompt + this.buffer;
+    const endTotal = PROMPT_WIDTH + this.buffer.length;
+    const targetTotal = PROMPT_WIDTH + this.cursor;
+    out += this.cursorMoveSeq(endTotal, targetTotal, cols);
+    this.handlers.write(out);
   }
 
   // ---------- redraw helpers ----------

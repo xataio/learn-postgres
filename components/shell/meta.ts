@@ -42,6 +42,24 @@ const HELP_TEXT = [
   "Type SQL and end with `;` to run it. Up/Down arrows recall history.",
 ].join("\n");
 
+/** Canonical backslash commands, surfaced for Tab completion. */
+export const META_COMMANDS = [
+  "\\?",
+  "\\l",
+  "\\d",
+  "\\dt",
+  "\\dv",
+  "\\dm",
+  "\\di",
+  "\\ds",
+  "\\dn",
+  "\\dT",
+  "\\du",
+  "\\dg",
+  "\\dx",
+  "\\df",
+];
+
 /** Wrap a value as a SQL string literal (doubling embedded single quotes). */
 function quoteIdent(s: string): string {
   return `'${s.replace(/'/g, "''")}'`;
