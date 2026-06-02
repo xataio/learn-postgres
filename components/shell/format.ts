@@ -110,7 +110,10 @@ export function formatQueryResult(result: QueryResult): string {
 }
 
 export function formatClientMessage(text: string): string {
-  return `${ANSI.cyan}${text}${ANSI.reset}\r\n`;
+  // The terminal runs with convertEol disabled, so bare "\n" would move down a
+  // row without returning to column 0 (the staircase effect). Normalize to CRLF.
+  const normalized = text.replace(/\r?\n/g, "\r\n");
+  return `${ANSI.cyan}${normalized}${ANSI.reset}\r\n`;
 }
 
 export function formatClientError(text: string): string {
