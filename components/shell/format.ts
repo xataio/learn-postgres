@@ -27,7 +27,11 @@ function valueToString(v: unknown): string {
   return String(v);
 }
 
-function formatBlock(block: ResultBlock): string[] {
+function formatBlock(
+  block: ResultBlock,
+  opts: { footer?: boolean } = {},
+): string[] {
+  const footer = opts.footer ?? true;
   const lines: string[] = [];
 
   if (block.fields.length === 0) {
@@ -73,8 +77,10 @@ function formatBlock(block: ResultBlock): string[] {
     lines.push(line);
   }
   // Footer
-  const rc = block.rowCount ?? cells.length;
-  lines.push(`(${rc} ${rc === 1 ? "row" : "rows"})`);
+  if (footer) {
+    const rc = block.rowCount ?? cells.length;
+    lines.push(`(${rc} ${rc === 1 ? "row" : "rows"})`);
+  }
   if (block.truncated) {
     lines.push(
       `${ANSI.yellow}-- output capped at ${cells.length} rows --${ANSI.reset}`,
@@ -118,4 +124,36 @@ export function formatClientMessage(text: string): string {
 
 export function formatClientError(text: string): string {
   return `${ANSI.red}${text}${ANSI.reset}\r\n`;
+}
+
+/** One rendered piece of a `\d NAME` describe, assembled by the orchestrator. */
+export type DescribeItem =
+  | { kind: "heading"; text: string }
+  | { kind: "table"; block: ResultBlock }
+  | { kind: "list"; caption: string; lines: string[] };
+
+/**
+ * Render the multi-section output of `\d NAME`: a bold heading, the column
+ * table (no row-count footer), then captioned lists of indexes / FKs /
+ * referenced-by whose text lines come pre-indented from SQL. Sections with no
+ * rows are omitted, matching psql.
+ */
+export function formatDescribe(
+  items: DescribeItem[],
+  durationMs: number,
+): string {
+  const lines: string[] = [];
+  for (const item of items) {
+    if (item.kind === "heading") {
+      lines.push(`${ANSI.bold}${item.text}${ANSI.reset}`);
+    } else if (item.kind === "table") {
+      lines.push(...formatBlock(item.block, { footer: false }));
+    } else {
+      if (item.lines.length === 0) continue;
+      lines.push(item.caption);
+      lines.push(...item.lines);
+    }
+  }
+  lines.push(`${ANSI.dim}Time: ${durationMs} ms${ANSI.reset}`);
+  return lines.join("\r\n") + "\r\n";
 }

@@ -5,12 +5,18 @@ import "@xterm/xterm/css/xterm.css";
 import { Readline } from "./readline";
 import { clearHistory, loadHistory, pushHistory } from "./history";
 import { expandMeta } from "./meta";
+import type { MetaResult } from "./meta";
 import {
   formatClientError,
   formatClientMessage,
+  formatDescribe,
   formatQueryResult,
 } from "./format";
-import type { QueryResult } from "@/lib/shell/types";
+import type { DescribeItem } from "./format";
+import type { QueryResult, ResultBlock } from "@/lib/shell/types";
+
+type DescribeMeta = Extract<MetaResult, { kind: "describe" }>;
+type FetchResult = QueryResult | { httpError: string };
 
 const BANNER = [
   "\x1b[2mlearn-postgres shell — type \\? for help, \\d to list relations.\x1b[0m",
@@ -250,6 +256,16 @@ async function handleSubmit(
       readline.promptAgain();
       return;
     }
+    if (meta.kind === "describe") {
+      readline.setBusy(true);
+      try {
+        await runDescribe(meta, write, lessonSlug);
+      } finally {
+        readline.setBusy(false);
+        readline.promptAgain();
+      }
+      return;
+    }
     // meta.kind === "query" — execute the translated SQL
     await runOnServer(meta.sql, write, lessonSlug);
     readline.promptAgain();
@@ -271,11 +287,10 @@ async function handleSubmit(
   }
 }
 
-async function runOnServer(
+async function fetchQuery(
   sql: string,
-  write: (s: string) => void,
   lessonSlug: string,
-): Promise<void> {
+): Promise<FetchResult> {
   try {
     const res = await fetch(
       `/api/lessons/${encodeURIComponent(lessonSlug)}/query`,
@@ -285,26 +300,99 @@ async function runOnServer(
         body: JSON.stringify({ sql }),
       },
     );
-    const json = (await res.json()) as QueryResult | { error?: string };
-
     if (res.status === 401) {
-      write(formatClientError("Not authenticated — refresh the page."));
-      return;
+      return { httpError: "Not authenticated — refresh the page." };
     }
     if (res.status === 404) {
-      write(
-        formatClientError(
+      return {
+        httpError:
           "No sandbox for this lesson — refresh the page to prepare one.",
-        ),
-      );
-      return;
+      };
     }
-    if ("ok" in json) {
-      write(formatQueryResult(json));
-      return;
-    }
-    write(formatClientError(json.error ?? `Request failed (${res.status})`));
+    const json = (await res.json()) as QueryResult | { error?: string };
+    if ("ok" in json) return json;
+    return { httpError: json.error ?? `Request failed (${res.status})` };
   } catch (err) {
-    write(formatClientError(`Network error: ${(err as Error).message}`));
+    return { httpError: `Network error: ${(err as Error).message}` };
   }
+}
+
+async function runOnServer(
+  sql: string,
+  write: (s: string) => void,
+  lessonSlug: string,
+): Promise<void> {
+  const result = await fetchQuery(sql, lessonSlug);
+  if ("httpError" in result) {
+    write(formatClientError(result.httpError));
+    return;
+  }
+  write(formatQueryResult(result));
+}
+
+async function runDescribe(
+  meta: DescribeMeta,
+  write: (s: string) => void,
+  lessonSlug: string,
+): Promise<void> {
+  // Phase 1: resolve the relation's oid, relkind, and qualified name.
+  const head = await fetchQuery(meta.oidSql, lessonSlug);
+  if ("httpError" in head) {
+    write(formatClientError(head.httpError));
+    return;
+  }
+  if (!head.ok) {
+    // Surfaces psql-style "relation does not exist" from the ::regclass cast.
+    write(formatQueryResult(head));
+    return;
+  }
+  const row = head.results[0]?.rows[0];
+  if (!row) {
+    write(formatClientError(`Did not find any relation named "${meta.arg}".`));
+    return;
+  }
+  const [oid, relkind, title] = row as [unknown, unknown, unknown];
+  const sections = meta.build(String(relkind), String(title), String(oid));
+
+  // Phase 2: batch every query-backed section into one round trip. The runner
+  // returns one ResultBlock per statement, in order.
+  const querySections = sections.filter((s) => s.type !== "heading");
+  let durationMs = head.durationMs;
+  let blocks: ResultBlock[] = [];
+  if (querySections.length > 0) {
+    const body = await fetchQuery(
+      querySections.map((s) => (s as { sql: string }).sql).join("\n"),
+      lessonSlug,
+    );
+    if ("httpError" in body) {
+      write(formatClientError(body.httpError));
+      return;
+    }
+    if (!body.ok) {
+      write(formatQueryResult(body));
+      return;
+    }
+    blocks = body.results;
+    durationMs += body.durationMs;
+  }
+
+  // Stitch the rendered material back together in declared section order.
+  const items: DescribeItem[] = [];
+  let blockIdx = 0;
+  for (const section of sections) {
+    if (section.type === "heading") {
+      items.push({ kind: "heading", text: section.text });
+      continue;
+    }
+    const block = blocks[blockIdx++];
+    if (!block) continue;
+    if (section.type === "table") {
+      items.push({ kind: "table", block });
+    } else {
+      const lines = block.rows.map((r) => String(r[0]));
+      items.push({ kind: "list", caption: section.caption, lines });
+    }
+  }
+
+  write(formatDescribe(items, durationMs));
 }
