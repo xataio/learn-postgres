@@ -1,0 +1,126 @@
+Sooner or later you'll write the same buggy code twice: a `SELECT` to check if a row exists, then an `INSERT` or `UPDATE` based on the result. Between those two statements, another connection can do its own check and you get a duplicate-key error — or worse, a duplicate row.
+
+Postgres' answer is `INSERT … ON CONFLICT`, often called **upsert**. One statement, atomic, race-free.
+
+The seed has a `page_views` table with `UNIQUE (page, user_email)` and a `tags` table with `UNIQUE name`. Both are realistic shapes for upsert.
+
+## The problem upsert solves
+
+"Record a page view: insert a new row at views = 1, or bump the counter if (page, user_email) already exists."
+
+The naive way is a check-then-write:
+
+```sql
+SELECT views FROM page_views WHERE page = '/home' AND user_email = 'ada@example.com';
+-- If found: UPDATE. If not: INSERT.
+```
+
+Two round trips, and any concurrent writer can slip between them. `INSERT … ON CONFLICT` collapses both branches into one atomic statement.
+
+## `ON CONFLICT (...) DO UPDATE`
+
+The shape:
+
+```sql
+INSERT INTO <table> (cols...) VALUES (...)
+ON CONFLICT (<conflict_target>) DO UPDATE
+SET col = <expr>;
+```
+
+The `conflict_target` is a column or set of columns covered by a `UNIQUE` constraint or primary key — Postgres needs an index to detect the conflict against. Here it's the `(page, user_email)` unique constraint.
+
+<Run>
+INSERT INTO page_views (page, user_email, views, last_seen)
+VALUES ('/home', 'ada@example.com', 1, now())
+ON CONFLICT (page, user_email) DO UPDATE
+SET views     = page_views.views + 1,
+    last_seen = EXCLUDED.last_seen;
+</Run>
+
+<Check id="ada-page-views-incremented">
+Ada already had one view on `/home`. After the upsert, she has two.
+</Check>
+
+Two new pieces of syntax:
+
+- **`page_views.views`** — the *existing* row's value. Qualify with the table name so it doesn't get confused with the incoming column.
+- **`EXCLUDED.col`** — the value from the row you tried to `INSERT`. It's a pseudo-table (think "the row that was excluded by the conflict") and it's the bridge between the INSERT side and the UPDATE side.
+
+So `EXCLUDED.last_seen` says "use the timestamp we just tried to insert" — useful when the new value comes from the caller, not from a computation on the old row.
+
+## Insert path: same statement, new row
+
+The same statement also handles the case where no conflict exists — the row just gets inserted.
+
+<Run>
+INSERT INTO page_views (page, user_email, views, last_seen)
+VALUES ('/pricing', 'newbie@example.com', 1, now())
+ON CONFLICT (page, user_email) DO UPDATE
+SET views     = page_views.views + 1,
+    last_seen = EXCLUDED.last_seen;
+</Run>
+
+<Check id="new-page-view-inserted">
+There was no `(/pricing, newbie@example.com)` row — the upsert inserted it with views = 1.
+</Check>
+
+One statement, two branches. The race condition is gone.
+
+## `ON CONFLICT (...) DO NOTHING`
+
+Sometimes the "update" branch is "ignore it, you're done". Use `DO NOTHING`.
+
+<Run>
+INSERT INTO tags (name) VALUES ('postgres'), ('sql')
+ON CONFLICT (name) DO NOTHING;
+</Run>
+
+<Check id="dedup-do-nothing">
+Both tags already existed. `DO NOTHING` quietly skipped them, so `postgres` still appears exactly once in the table.
+</Check>
+
+`DO NOTHING` is great for **idempotent inserts** — re-run the same script and you don't get errors. Common uses:
+
+- Seeding lookup tables ("ensure these tags exist").
+- Event ingestion with a unique event id ("if we've already processed this id, skip").
+- Migrating data where the source might be replayed.
+
+If you want to know whether the row was actually inserted, combine `DO NOTHING` with `RETURNING` — only inserted rows come back.
+
+<Run>
+INSERT INTO tags (name) VALUES ('postgres'), ('graphql')
+ON CONFLICT (name) DO NOTHING
+RETURNING id, name;
+</Run>
+
+Only `graphql` comes back — `postgres` already existed and was skipped.
+
+## `WHERE` on the UPDATE branch
+
+`DO UPDATE` accepts a `WHERE` that filters which conflicting rows actually get updated. "Update only if the incoming value is newer":
+
+```sql
+INSERT INTO page_views (page, user_email, views, last_seen)
+VALUES ('/home', 'ada@example.com', 1, '2024-05-01 09:00:00+00')
+ON CONFLICT (page, user_email) DO UPDATE
+SET last_seen = EXCLUDED.last_seen
+WHERE page_views.last_seen < EXCLUDED.last_seen;
+```
+
+If the incoming `last_seen` is older than the stored one, the conflict matches but the `WHERE` drops the update — the row is left alone. Conflict not handled? Postgres still doesn't raise an error; the row just stays as-is.
+
+## Common pitfalls
+
+- **No matching UNIQUE constraint.** Postgres needs an index to detect the conflict. `ON CONFLICT (foo)` fails at planning time if `foo` isn't covered by a primary key or unique index (or partial unique index — `ON CONFLICT (foo) WHERE <expr>` matches a partial unique index).
+- **`EXCLUDED` vs the table name.** `EXCLUDED.x` is the incoming row, `tbl.x` is the existing row. Swap them and you'll be writing the old value back over itself.
+- **Triggers fire on the path actually taken.** A `BEFORE INSERT` trigger fires when the row is inserted; on the UPDATE path it doesn't. If you rely on `updated_at` triggers, check they handle both.
+
+## What you learned
+
+- `INSERT … ON CONFLICT (...) DO UPDATE` collapses check-then-write into one atomic statement.
+- The conflict target must be a unique constraint or primary key.
+- `EXCLUDED.col` references the incoming row in the UPDATE branch; `tbl.col` is the existing row.
+- `ON CONFLICT DO NOTHING` makes inserts idempotent; pair with `RETURNING` to learn which rows actually landed.
+- A `WHERE` on the UPDATE branch lets you conditionally update on conflict.
+
+Up next: wrapping a chunk of work in `BEGIN ... COMMIT` so it either all happens or none of it does.
