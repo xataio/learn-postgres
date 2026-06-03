@@ -1,0 +1,19 @@
+title: Subqueries
+summary: Nest one query inside another — scalar subqueries, IN/EXISTS, correlated subqueries, and LATERAL.
+estimatedMinutes: 14
+tags:
+  - subquery
+  - exists
+  - correlated
+  - lateral
+  - in
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: seed-loaded
+    type: row-count
+    description: The seeded orders table has 9 rows — click to mark this lesson done.
+    table: orders
+    expect:
+      rowCount: 9
