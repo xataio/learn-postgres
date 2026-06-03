@@ -1,0 +1,136 @@
+A subquery is a `SELECT` nested inside another statement. It lets you compute a value, a list, or a whole table on the fly and use it in the outer query — without a separate round trip or a temporary table.
+
+The seed has `customers` and their `orders`. One customer (Edsger) has placed no orders, which makes the `EXISTS` examples concrete.
+
+## Scalar subquery: a single value
+
+A subquery wrapped so it returns exactly **one row, one column** can stand in anywhere a single value can. Here we compare each order against the global average:
+
+<Run>
+SELECT product, amount
+FROM orders
+WHERE amount > (SELECT avg(amount) FROM orders)
+ORDER BY amount DESC;
+</Run>
+
+The inner `SELECT avg(amount)` runs once and produces a single number; the outer query filters against it. You can also drop a scalar subquery into the `SELECT` list to show it alongside each row:
+
+<Run>
+SELECT product,
+       amount,
+       round(amount - (SELECT avg(amount) FROM orders), 2) AS vs_avg
+FROM orders
+ORDER BY vs_avg DESC;
+</Run>
+
+If a "scalar" subquery accidentally returns more than one row, Postgres raises an error — that's the contract.
+
+## Subquery in `WHERE`: `IN`
+
+A subquery that returns one column and many rows produces a *list* you can test membership against with `IN`. Which customers have ever ordered?
+
+<Run>
+SELECT name, country
+FROM customers
+WHERE id IN (SELECT customer_id FROM orders)
+ORDER BY name;
+</Run>
+
+Everyone except Edsger. Flip it to `NOT IN` to find the customers with no orders — but be careful: if the subquery can yield a `NULL`, `NOT IN` behaves surprisingly (any comparison to NULL is "unknown", so the whole thing can return nothing). For "rows with no match", `NOT EXISTS` below is the safer tool.
+
+## `EXISTS`: does a related row exist?
+
+`EXISTS (subquery)` is true when the subquery returns **at least one row** — it doesn't care about the values, just the presence. It's the natural fit for "customers who have ordered":
+
+<Run>
+SELECT name
+FROM customers c
+WHERE EXISTS (
+  SELECT 1 FROM orders o WHERE o.customer_id = c.id
+)
+ORDER BY name;
+</Run>
+
+Two things to notice:
+
+1. **`SELECT 1`** — the projected value is irrelevant to `EXISTS`, so by convention you select a constant.
+2. **`o.customer_id = c.id`** references `c` from the *outer* query. That makes this a **correlated subquery**: it's re-evaluated for each outer row, against that row's `id`.
+
+`NOT EXISTS` is the clean way to ask the opposite — customers with no orders:
+
+<Run>
+SELECT name
+FROM customers c
+WHERE NOT EXISTS (
+  SELECT 1 FROM orders o WHERE o.customer_id = c.id
+)
+ORDER BY name;
+</Run>
+
+Just Edsger. Unlike `NOT IN`, `NOT EXISTS` handles NULLs the way you'd expect.
+
+## Correlated subquery in `SELECT`
+
+Because a correlated subquery sees the current outer row, you can use one to compute a per-row aggregate — here, each customer's order count and total:
+
+<Run>
+SELECT
+  c.name,
+  (SELECT count(*)    FROM orders o WHERE o.customer_id = c.id) AS orders,
+  (SELECT sum(amount) FROM orders o WHERE o.customer_id = c.id) AS total
+FROM customers c
+ORDER BY total DESC NULLS LAST;
+</Run>
+
+This is readable, but each subquery runs once per customer. A `LEFT JOIN ... GROUP BY` often does the same job in one pass — correlated subqueries shine when the logic doesn't fit a tidy group-by, or when you only need them for a few rows.
+
+## Subquery in `FROM`: a derived table
+
+A subquery in the `FROM` clause is a **derived table** — an inline result set you can join to or filter further. It needs an alias.
+
+<Run>
+SELECT country, round(avg(per_customer_total), 2) AS avg_customer_spend
+FROM (
+  SELECT c.country, c.id, sum(o.amount) AS per_customer_total
+  FROM customers c
+  JOIN orders o ON o.customer_id = c.id
+  GROUP BY c.country, c.id
+) AS totals
+GROUP BY country
+ORDER BY avg_customer_spend DESC;
+</Run>
+
+Aggregate twice: first roll up to one row per customer, then average those per country. (In the next module you'll meet CTEs — `WITH` — which do the same thing with better readability when the nesting gets deep.)
+
+## `LATERAL`: a subquery that sees the row to its left
+
+A normal subquery in `FROM` can't reference columns from other tables in the same `FROM`. Add `LATERAL` and it can — each row on the left is fed into the subquery on the right. The classic use is **top-N per group**: each customer's single most expensive order.
+
+<Run>
+SELECT c.name, top.product, top.amount
+FROM customers c
+JOIN LATERAL (
+  SELECT product, amount
+  FROM orders o
+  WHERE o.customer_id = c.id
+  ORDER BY amount DESC
+  LIMIT 1
+) AS top ON true
+ORDER BY top.amount DESC;
+</Run>
+
+For each customer, the lateral subquery runs ordered-and-limited to one row. `JOIN LATERAL ... ON true` keeps only customers with a match; swap to `LEFT JOIN LATERAL` to keep customers with no orders (Edsger) too. This "top-N-per-group" shape is hard to express any other way and is one of the most useful tricks in Postgres.
+
+## What you learned
+
+- A **scalar subquery** returns one value and stands in wherever a value can — in `WHERE` or the `SELECT` list.
+- `IN (subquery)` tests membership against a list; prefer `NOT EXISTS` over `NOT IN` when NULLs are possible.
+- `EXISTS` / `NOT EXISTS` test for the presence of a related row and ignore its values.
+- A **correlated subquery** references the outer row and is evaluated per row.
+- A subquery in `FROM` is a **derived table** (needs an alias); `LATERAL` lets it reference the rows to its left — the go-to for top-N-per-group.
+
+<Check id="seed-loaded">
+Mark this lesson done — we'll just confirm the sandbox is healthy.
+</Check>
+
+Up next: a new module on schema and modeling, starting with Postgres data types.
