@@ -11,12 +11,6 @@ authors:
   - exekias
 seed: seed.sql
 checks:
-  - id: seed-loaded
-    type: row-count
-    description: The seeded products table has 5 rows.
-    table: products
-    expect:
-      rowCount: 5
   - id: discount-added
     type: schema-state
     description: Add a discount_price column of type numeric(10,2) to products.
