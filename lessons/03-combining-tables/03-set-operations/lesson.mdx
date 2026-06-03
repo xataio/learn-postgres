@@ -1,0 +1,95 @@
+Joins glue tables together *side by side* — more columns per row. Set operations stack results *top to bottom* — more rows, same columns. When you have two queries that produce the same shape of result and you want them in one list, you reach for `UNION`, `INTERSECT`, or `EXCEPT`.
+
+The seed has two contact lists: `newsletter_subscribers` and `webinar_attendees`. Some people are on both, and one name is duplicated within a list — handy for seeing how deduplication works.
+
+## UNION: combine and deduplicate
+
+`UNION` runs two queries and returns every row from either, with **duplicates removed**.
+
+<Run>
+SELECT email, name FROM newsletter_subscribers
+UNION
+SELECT email, name FROM webinar_attendees
+ORDER BY email;
+</Run>
+
+Grace and Linus were on both lists, but each appears once. The duplicate Linus *inside* the newsletter list is also collapsed. `UNION` always returns a distinct set — that dedup is its defining behavior.
+
+The only rule: both sides must have the **same number of columns, in compatible types**. The column names come from the *first* query.
+
+## UNION ALL: keep every row
+
+Deduplication isn't free — Postgres has to compare rows to find duplicates. If you know there are none, or you *want* to keep them, `UNION ALL` skips that work and concatenates the two results as-is.
+
+<Run>
+SELECT email, name FROM newsletter_subscribers
+UNION ALL
+SELECT email, name FROM webinar_attendees
+ORDER BY email;
+</Run>
+
+Now Grace and Linus appear twice (once per list), and the duplicate Linus shows a third time. `UNION ALL` is faster and is usually what you want when the inputs are already disjoint — e.g. stitching together this month's and last month's events.
+
+> Rule of thumb: reach for `UNION ALL` by default and only use plain `UNION` when you actually need the deduplication. Paying for a sort you don't need is a common, quiet performance bug.
+
+## INTERSECT: rows in both
+
+`INTERSECT` keeps only the rows that appear in **both** queries.
+
+<Run>
+SELECT email, name FROM newsletter_subscribers
+INTERSECT
+SELECT email, name FROM webinar_attendees
+ORDER BY email;
+</Run>
+
+Grace and Linus — the people who are on the newsletter *and* came to the webinar. Like `UNION`, it returns a distinct set by default (`INTERSECT ALL` exists if you need to preserve multiplicity).
+
+## EXCEPT: rows in the first but not the second
+
+`EXCEPT` returns rows from the first query that are **not** in the second — set subtraction.
+
+<Run>
+SELECT email, name FROM newsletter_subscribers
+EXCEPT
+SELECT email, name FROM webinar_attendees
+ORDER BY email;
+</Run>
+
+Ada, Alan, and Margaret: subscribed to the newsletter but never attended a webinar. Order matters — flip the two queries and you get the opposite difference:
+
+<Run>
+SELECT email, name FROM webinar_attendees
+EXCEPT
+SELECT email, name FROM newsletter_subscribers
+ORDER BY email;
+</Run>
+
+Dennis, Ken, and Barbara: attended but aren't subscribed. (Some other databases spell this `MINUS`; in Postgres it's always `EXCEPT`.)
+
+## One ORDER BY for the whole thing
+
+A single `ORDER BY` at the very end sorts the combined result — you can't put one on each side. The same goes for a trailing `LIMIT`.
+
+<Run>
+SELECT email FROM newsletter_subscribers
+UNION
+SELECT email FROM webinar_attendees
+ORDER BY email
+LIMIT 3;
+</Run>
+
+If you need to sort *within* one side before combining — say, to `LIMIT` each query independently — wrap that side in parentheses: `(SELECT ... ORDER BY ... LIMIT ...) UNION ALL (SELECT ...)`.
+
+## What you learned
+
+- Set operations stack two same-shaped results vertically; both sides need matching column counts and compatible types.
+- `UNION` removes duplicates; `UNION ALL` keeps them and skips the dedup work — prefer `ALL` unless you need the dedup.
+- `INTERSECT` keeps rows present in both queries; `EXCEPT` keeps rows in the first but not the second (order matters).
+- A trailing `ORDER BY` / `LIMIT` applies to the whole combined result; parenthesize a side to sort or limit it alone.
+
+<Check id="seed-loaded">
+Mark this lesson done — we'll just confirm the sandbox is healthy.
+</Check>
+
+Up next: nesting one query inside another with subqueries — scalar values, `IN`/`EXISTS`, correlated subqueries, and `LATERAL`.
