@@ -1,0 +1,19 @@
+title: Dates and times
+summary: Work with timestamptz, intervals, and time zones — arithmetic, extract, date_trunc, and why you almost always want timestamptz.
+estimatedMinutes: 15
+tags:
+  - timestamptz
+  - interval
+  - time-zone
+  - date-trunc
+  - extract
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: seed-loaded
+    type: row-count
+    description: The seeded talks table has 6 rows — click to mark this lesson done.
+    table: talks
+    expect:
+      rowCount: 6
