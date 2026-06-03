@@ -1,0 +1,25 @@
+title: Data types
+summary: Pick the right column type — integers, exact vs floating numerics, text, boolean, enums, and identity keys — plus casting.
+estimatedMinutes: 14
+tags:
+  - data-types
+  - numeric
+  - boolean
+  - enum
+  - identity
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: seed-loaded
+    type: row-count
+    description: The seeded products table has 5 rows.
+    table: products
+    expect:
+      rowCount: 5
+  - id: discount-added
+    type: schema-state
+    description: Add a discount_price column of type numeric(10,2) to products.
+    table: products
+    column: discount_price
+    columnType: numeric

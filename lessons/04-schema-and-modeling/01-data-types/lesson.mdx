@@ -1,0 +1,145 @@
+Every column has a type, and the type you pick shapes what the database will store, how much space it takes, and which bugs it quietly prevents. This lesson tours the type families you'll use most. The seed has one `products` table that puts each of them to work.
+
+Take a look at what the seed defined:
+
+<Run>
+SELECT column_name, data_type, numeric_precision, numeric_scale
+FROM information_schema.columns
+WHERE table_name = 'products'
+ORDER BY ordinal_position;
+</Run>
+
+## Integers: `smallint`, `integer`, `bigint`
+
+Three sizes of whole number. Use `integer` (a.k.a. `int`, 4 bytes, up to ~2.1 billion) as your default. Reach for `bigint` (8 bytes) when you might exceed that — row IDs on a big table, byte counts, anything that grows without bound. `smallint` (2 bytes) is a niche space optimization.
+
+<Run>
+SELECT
+  1                     AS an_int,
+  pg_typeof(1)          AS its_type,
+  2147483647            AS int_max,
+  9223372036854775807   AS bigint_max;
+</Run>
+
+`pg_typeof(...)` reports the type Postgres inferred — a handy way to check what you're actually getting.
+
+## Exact vs approximate numbers
+
+This is the distinction that bites people. `numeric` (a.k.a. `decimal`) stores numbers **exactly**, to a precision you specify — `numeric(10,2)` is up to 10 digits with 2 after the decimal point. `real` and `double precision` are **floating point**: fast, compact, and *approximate*.
+
+<Run>
+SELECT
+  0.1::numeric + 0.2::numeric           AS exact,
+  0.1::real    + 0.2::real              AS approximate;
+</Run>
+
+The float result isn't quite `0.3`. That rounding error is fine for a weight or a sensor reading, and a disaster for money. **Rule: money and anything that must add up uses `numeric`; measurements where a tiny error is acceptable can use `real`/`double precision`.** That's why the seed's `price` is `numeric(10,2)` and `weight_kg` is `real`.
+
+## Text: `text` vs `varchar`
+
+Postgres has `text` (unlimited), `varchar(n)` (capped at `n` characters), and `char(n)` (fixed, space-padded — avoid it). Crucially, **there is no performance difference** between `text` and `varchar` in Postgres; the length limit on `varchar(n)` is just a constraint.
+
+<Run>
+SELECT
+  'hello'::text     AS as_text,
+  length('héllo')   AS char_length,
+  upper('hello')    AS shouting;
+</Run>
+
+Default to `text` and add a `CHECK` constraint if you genuinely need a length limit — it's easier to change later than a baked-in `varchar(n)`.
+
+## Boolean
+
+`boolean` holds `true`, `false`, or `NULL`. Postgres accepts many input spellings (`true`/`'t'`/`'yes'`/`1`) but always stores and prints `t`/`f`.
+
+<Run>
+SELECT name, price
+FROM products
+WHERE in_stock          -- a boolean column needs no "= true"
+ORDER BY price DESC;
+</Run>
+
+A boolean column is its own condition — write `WHERE in_stock`, not `WHERE in_stock = true`.
+
+## Enums: a fixed set of labels
+
+When a column may only hold one of a small, fixed set of values — a status, a tier, a category — an `enum` type enforces that at the database level. The seed declared one:
+
+```sql
+CREATE TYPE product_status AS ENUM ('draft', 'active', 'discontinued');
+```
+
+Enums sort in **declaration order**, not alphabetically — which is often exactly what you want for a lifecycle:
+
+<Run>
+SELECT name, status
+FROM products
+ORDER BY status;          -- draft < active < discontinued, as declared
+</Run>
+
+Try inserting a value that isn't in the set and Postgres rejects it:
+
+<Run>
+INSERT INTO products (sku, name, price, status)
+VALUES ('XX-99', 'Mystery box', 10.00, 'on-fire');
+</Run>
+
+That error *is* the feature — the type guarantees `status` is always one of the three. (The trade-off: adding a new value later needs `ALTER TYPE ... ADD VALUE`. When the set changes often, a lookup table with a foreign key is more flexible.)
+
+## Identity columns
+
+Most tables need an auto-generated key. The modern, standard way is an **identity column**; the seed uses one:
+
+```sql
+id int GENERATED ALWAYS AS IDENTITY PRIMARY KEY
+```
+
+You omit `id` on insert and Postgres fills it in. You may have seen `serial` in older code — it does the same job but is a legacy shorthand; prefer `GENERATED ... AS IDENTITY` in new schemas.
+
+<Run>
+INSERT INTO products (sku, name, price)
+VALUES ('HP-11', 'Headphones', 149.00)
+RETURNING id, sku, name;
+</Run>
+
+`RETURNING` hands back the generated `id` — no second query needed.
+
+## Casting with `::`
+
+Convert between types with `value::type` (or the SQL-standard `CAST(value AS type)`). You'll use it constantly — parsing text, forcing exact division, formatting output.
+
+<Run>
+SELECT
+  '42'::int + 8           AS parsed_then_added,
+  7 / 2                   AS integer_division,
+  7::numeric / 2          AS exact_division;
+</Run>
+
+`7 / 2` is `3` because both operands are integers — integer math truncates. Cast one side to `numeric` and you get `3.5`. A casting gotcha worth remembering.
+
+## Your turn
+
+Give products a column for sale pricing. Add a `discount_price` of type `numeric(10,2)` (exact, like `price`):
+
+<Run>
+ALTER TABLE products ADD COLUMN discount_price numeric(10,2);
+</Run>
+
+<Check id="discount-added">
+Run the `ALTER TABLE` above. We'll confirm `products.discount_price` exists with a `numeric` type.
+</Check>
+
+## What you learned
+
+- `integer` is the default whole number; `bigint` when it might grow large.
+- `numeric` is **exact** (use it for money); `real`/`double precision` are fast but **approximate**.
+- Prefer `text` over `varchar(n)` — same speed, fewer regrets; add a `CHECK` if you need a limit.
+- A `boolean` column is its own condition: `WHERE in_stock`.
+- `enum` types pin a column to a fixed set of labels and sort in declaration order.
+- Use `GENERATED ... AS IDENTITY` for auto keys (not legacy `serial`), and `::type` to cast.
+
+<Check id="seed-loaded">
+This confirms the seed loaded its 5 products.
+</Check>
+
+Up next: the trickiest family of all — dates, times, time zones, and intervals.
