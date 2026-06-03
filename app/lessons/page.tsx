@@ -17,6 +17,14 @@ const PILL_TONE: Record<Bucket, string> = {
   available: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
 };
 
+const DIFFICULTY_TONE: Record<string, string> = {
+  beginner:
+    "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
+  intermediate:
+    "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300",
+  advanced: "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300",
+};
+
 function classify(passed: number, total: number): Bucket {
   if (total > 0 && passed === total) return "completed";
   if (passed > 0 && passed < total) return "continue";
@@ -105,6 +113,11 @@ export default async function DashboardPage() {
               <h2 className="font-mono text-base font-semibold tracking-tight text-zinc-800 dark:text-zinc-200">
                 {module.title}
               </h2>
+              <span
+                className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium capitalize ${DIFFICULTY_TONE[module.difficulty]}`}
+              >
+                {module.difficulty}
+              </span>
               <span className="ml-auto shrink-0 font-mono text-xs text-zinc-400">
                 Module {module.order}
               </span>
