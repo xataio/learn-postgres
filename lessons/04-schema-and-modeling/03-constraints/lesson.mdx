@@ -1,0 +1,104 @@
+A constraint is a rule the database enforces for you. Instead of hoping every piece of application code remembers "email must be unique" or "a balance can't go negative", you declare it once on the table and Postgres guarantees it — rejecting any statement that would break it. Bad data never gets in.
+
+The seed is a tiny bank: an `accounts` table where every column carries a rule, and a `transactions` table that points back to it.
+
+<Run>
+SELECT * FROM accounts ORDER BY id;
+</Run>
+
+## NOT NULL: a value is required
+
+The simplest constraint. A `NOT NULL` column must always have a value. The seed marks `email` as `NOT NULL`, so an insert that omits it fails:
+
+<Run>
+INSERT INTO accounts (balance) VALUES (100);
+</Run>
+
+The error names the column and constraint. Compare that to leaving a *nullable* column empty (like `transactions.memo`), which is perfectly fine.
+
+## PRIMARY KEY: the unique row identifier
+
+A `PRIMARY KEY` marks the column(s) that uniquely identify each row. It's really two constraints in one: **`UNIQUE` + `NOT NULL`**. The seed's `id` is the primary key, so no two accounts can share an id and none can be null. A table gets at most one primary key — it's *the* identity of a row.
+
+## UNIQUE: no duplicates
+
+`UNIQUE` forbids duplicate values in a column (or combination of columns) — without making it the row's identity. The seed makes `email` unique, so a second account with an existing email is rejected:
+
+<Run>
+INSERT INTO accounts (email, balance) VALUES ('ada@example.com', 50);
+</Run>
+
+One subtlety: `UNIQUE` allows multiple `NULL`s, because in SQL no two NULLs are considered equal. If you need "unique *and* always present", pair `UNIQUE` with `NOT NULL` (or use a primary key).
+
+## CHECK: a custom rule
+
+A `CHECK` constraint enforces any boolean expression on a row. The seed says `CHECK (balance >= 0)` — an account can never go negative. Try to open one in the red:
+
+<Run>
+INSERT INTO accounts (email, balance) VALUES ('overdrawn@example.com', -25);
+</Run>
+
+Rejected. The `transactions` table has `CHECK (amount <> 0)` too — a zero-amount transaction is meaningless, so the schema forbids it. `CHECK` is your tool for domain rules the type system alone can't express: percentages between 0 and 100, end dates after start dates, non-empty strings.
+
+## DEFAULT: fill in a missing value
+
+A `DEFAULT` isn't strictly a constraint, but it works alongside them: when an insert omits the column, Postgres supplies the default instead of `NULL`. The seed gives `balance` a default of `0`, so a new account needs only an email:
+
+<Run>
+INSERT INTO accounts (email) VALUES ('newbie@example.com')
+RETURNING id, email, balance;
+</Run>
+
+`balance` came back as `0.00` — the default filled in, and it still satisfies the `CHECK`.
+
+## FOREIGN KEY: referential integrity
+
+A `FOREIGN KEY` ties a column to a row in another table and guarantees the reference is valid. `transactions.account_id` references `accounts(id)`, so you cannot record a transaction for an account that doesn't exist:
+
+<Run>
+INSERT INTO transactions (account_id, amount) VALUES (999, 100);
+</Run>
+
+There's no account `999`, so the insert is refused. The flip side: the foreign key also protects the parent. The seed declared `ON DELETE CASCADE`, meaning deleting an account automatically deletes its transactions. Watch both tables shrink together:
+
+<Run>
+DELETE FROM accounts WHERE email = 'linus@example.com';
+SELECT
+  (SELECT count(*) FROM accounts)     AS accounts_left,
+  (SELECT count(*) FROM transactions) AS transactions_left;
+</Run>
+
+(Linus had no transactions, so only the account count drops — but had he any, they'd have gone too.) Other `ON DELETE` options: `RESTRICT`/`NO ACTION` block the delete while children exist, and `SET NULL` orphans the children by nulling their reference. Pick the one that matches your data's meaning.
+
+## Adding a constraint to an existing table
+
+Constraints aren't only for `CREATE TABLE`. `ALTER TABLE` adds them later — Postgres validates the existing rows and rejects the change if any would violate it:
+
+<Run>
+ALTER TABLE accounts ADD CONSTRAINT balance_under_million CHECK (balance < 1000000);
+</Run>
+
+Because every current balance is under a million, the constraint is accepted and applies from now on. Had a row violated it, the `ALTER` would have failed and changed nothing.
+
+## Your turn
+
+Open a valid account. It needs a **unique** email and a **non-negative** balance to satisfy the constraints:
+
+<Run>
+INSERT INTO accounts (email, balance) VALUES ('margaret@example.com', 800.00);
+</Run>
+
+<Check id="account-added">
+Run the insert above. We'll confirm an account for `margaret@example.com` exists with a non-negative balance.
+</Check>
+
+## What you learned
+
+- `NOT NULL` requires a value; `DEFAULT` supplies one when an insert omits the column.
+- `PRIMARY KEY` = `UNIQUE` + `NOT NULL` and identifies the row; a table has at most one.
+- `UNIQUE` forbids duplicates (but allows multiple NULLs).
+- `CHECK` enforces any boolean rule — your tool for domain logic.
+- `FOREIGN KEY` guarantees a reference points at a real row; `ON DELETE CASCADE`/`RESTRICT`/`SET NULL` decide what happens to children.
+- `ALTER TABLE ... ADD CONSTRAINT` adds rules later, validating existing rows first.
+
+Up next: Module 5 builds on these foundations with intermediate querying — conditional expressions, CTEs, and window functions.

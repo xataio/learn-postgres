@@ -1,0 +1,20 @@
+title: Constraints
+summary: Let the database enforce your rules — NOT NULL, PRIMARY KEY, UNIQUE, FOREIGN KEY, CHECK, and DEFAULT.
+estimatedMinutes: 14
+tags:
+  - constraints
+  - primary-key
+  - foreign-key
+  - check
+  - unique
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: account-added
+    type: query-returns
+    description: Insert a valid account for margaret@example.com (unique email, non-negative balance).
+    sql: SELECT count(*)::int FROM accounts WHERE email = 'margaret@example.com' AND balance >= 0
+    expect:
+      rowCount: 1
+      rows: [[1]]

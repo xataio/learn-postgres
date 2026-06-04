@@ -1,0 +1,19 @@
+title: Set operations
+summary: Stack query results vertically with UNION, INTERSECT, and EXCEPT — and the ALL variants that skip deduplication.
+estimatedMinutes: 12
+tags:
+  - union
+  - union-all
+  - intersect
+  - except
+  - set-operations
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: seed-loaded
+    type: row-count
+    description: The seeded newsletter_subscribers table has 6 rows — click to mark this lesson done.
+    table: newsletter_subscribers
+    expect:
+      rowCount: 6

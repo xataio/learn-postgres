@@ -20,10 +20,10 @@
     "@neondatabase/serverless": "^1.1.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",
-    "better-auth": "^1.6.13",
+    "better-auth": "^1.6.14",
     "drizzle-orm": "^0.45.2",
     "js-yaml": "^4.1.1",
-    "next": "16.2.6",
+    "next": "16.2.7",
     "next-mdx-remote": "^6.0.0",
     "pg": "^8.20.0",
     "react": "19.2.7",
@@ -45,9 +45,9 @@
     "dotenv": "^17.4.2",
     "drizzle-kit": "^0.31.10",
     "eslint": "^9.39.4",
-    "eslint-config-next": "16.2.6",
+    "eslint-config-next": "16.2.7",
     "tailwindcss": "^4",
     "tsx": "^4.21.0",
-    "typescript": "^5"
+    "typescript": "^6"
   }
 }
