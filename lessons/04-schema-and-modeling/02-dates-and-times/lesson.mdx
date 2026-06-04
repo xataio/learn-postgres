@@ -1,0 +1,133 @@
+Dates and times are where well-meaning schemas go wrong. Postgres has excellent support — but you have to pick the right type and understand time zones. The seed has a `talks` table: each row has a `starts_at` (a `timestamptz`) and a `duration` (an `interval`).
+
+## The four temporal types
+
+- **`date`** — a calendar day, no time. `2024-09-10`.
+- **`time`** — a time of day, no date. `14:30:00`.
+- **`timestamp`** — a date *and* time, with **no** time zone. A "wall clock" reading with no idea where on Earth it was taken.
+- **`timestamptz`** — a date and time that represents an **absolute moment**. This is the one you want almost every time.
+
+## Why `timestamptz`, almost always
+
+A `timestamptz` stores an absolute instant (internally in UTC). On the way in, Postgres interprets the literal using your session's time zone; on the way out, it renders the instant back in your session's time zone. A plain `timestamp` does none of this — `2024-09-10 14:00` could be 2pm anywhere, and the database can't tell you when that actually was.
+
+<Run>
+SHOW timezone;
+SELECT now() AS now_tz, now()::timestamp AS now_no_tz;
+</Run>
+
+`now()` returns a `timestamptz` — the current absolute moment. Cast it to `timestamp` and you strip the zone information, keeping only the wall-clock numbers. That loss is exactly the bug you're avoiding by storing `timestamptz`.
+
+## Time zones are a display concern
+
+Because a `timestamptz` is an absolute instant, the *same* stored value displays differently depending on the session zone. Change the zone and re-read — the underlying moment never moved:
+
+<Run>
+SET TIME ZONE 'UTC';
+SELECT title, starts_at FROM talks ORDER BY starts_at LIMIT 2;
+</Run>
+
+<Run>
+SET TIME ZONE 'America/New_York';
+SELECT title, starts_at FROM talks ORDER BY starts_at LIMIT 2;
+</Run>
+
+Same rows, same instants — but New York renders them five hours earlier in clock terms. **Store the absolute moment once; format per user at the edges.**
+
+To pin a single query to a specific zone without changing your session, use `AT TIME ZONE`, which converts a `timestamptz` to the wall-clock `timestamp` in that zone:
+
+<Run>
+SELECT title,
+       starts_at AT TIME ZONE 'Europe/Madrid' AS madrid_wall_clock
+FROM talks
+ORDER BY starts_at
+LIMIT 3;
+</Run>
+
+## Intervals and date arithmetic
+
+An `interval` is a span of time — "45 minutes", "2 days", "1 hour 15 minutes". You can add and subtract them from timestamps. The seed stores each talk's `duration` as an interval, so the end time is just addition:
+
+<Run>
+SELECT title,
+       starts_at,
+       starts_at + duration AS ends_at
+FROM talks
+ORDER BY starts_at;
+</Run>
+
+Subtracting two timestamps yields an interval — the gap between them:
+
+<Run>
+SELECT title,
+       starts_at - lag(starts_at) OVER (ORDER BY starts_at) AS gap_since_previous
+FROM talks
+ORDER BY starts_at;
+</Run>
+
+Intervals compose with literals too: `now() - interval '7 days'`, `starts_at + interval '30 minutes'`. This is how you express "in the last week" or "30 minutes before the talk".
+
+## Pulling fields out with `extract`
+
+`extract(field FROM value)` pulls a numeric component — `year`, `month`, `day`, `hour`, `dow` (day of week), `epoch` (seconds since 1970), and more.
+
+<Run>
+SELECT title,
+       extract(hour FROM starts_at)  AS start_hour,
+       extract(dow  FROM starts_at)  AS day_of_week   -- 0 = Sunday
+FROM talks
+ORDER BY starts_at;
+</Run>
+
+`extract(epoch FROM interval)` is the trick for turning a duration into seconds — handy for converting an `interval` to minutes:
+
+<Run>
+SELECT title,
+       extract(epoch FROM duration) / 60 AS minutes
+FROM talks
+ORDER BY minutes DESC;
+</Run>
+
+## Bucketing with `date_trunc`
+
+`date_trunc('unit', value)` rounds a timestamp **down** to the start of a unit — the start of the hour, day, month. It's the standard way to group time series into buckets. How many talks per day?
+
+<Run>
+SELECT date_trunc('day', starts_at) AS day,
+       count(*)                     AS talks
+FROM talks
+GROUP BY day
+ORDER BY day;
+</Run>
+
+Swap `'day'` for `'hour'`, `'week'`, or `'month'` to change the bucket size. This pairs constantly with the aggregation you've already seen — `date_trunc` to bucket, `GROUP BY` to roll up.
+
+## Generating a series of dates
+
+`generate_series` isn't date-specific, but with a start, end, and interval step it fills in a continuous range of days — invaluable for reports that must show **every** day, including ones with no data:
+
+<Run>
+SELECT d::date AS day
+FROM generate_series(
+  '2024-09-09'::timestamptz,
+  '2024-09-12'::timestamptz,
+  interval '1 day'
+) AS d;
+</Run>
+
+`LEFT JOIN` your data onto a generated series like this and the gaps show up as zeros instead of missing rows — the cure for "my chart skips empty days".
+
+## What you learned
+
+- Four types: `date`, `time`, `timestamp` (no zone), and `timestamptz` (an absolute instant) — **default to `timestamptz`**.
+- A `timestamptz` stores one moment; the session time zone only affects how it's *displayed*. Use `AT TIME ZONE` to convert for a single query.
+- `interval` values add to and subtract from timestamps; subtracting two timestamps gives an interval.
+- `extract(field FROM ...)` pulls out components; `extract(epoch FROM interval)` converts a duration to seconds.
+- `date_trunc('unit', ...)` buckets timestamps for time-series `GROUP BY`.
+- `generate_series(start, end, interval)` produces a gapless range of days to join against.
+
+<Check id="seed-loaded">
+Mark this lesson done — we'll just confirm the sandbox is healthy.
+</Check>
+
+Up next: enforcing the rules your data must follow — primary keys, foreign keys, `UNIQUE`, `CHECK`, and `NOT NULL`.
