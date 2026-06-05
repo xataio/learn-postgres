@@ -1,7 +1,9 @@
 name: Cleanup Preview Branch
 
+# pull_request_target (not pull_request) so the run gets repository secrets even
+# for Dependabot and fork PRs. Safe here: we never check out or run PR code.
 on:
-  pull_request:
+  pull_request_target:
     types: [closed]
 
 permissions:
@@ -25,6 +27,10 @@ jobs:
           REF: ${{ github.event.pull_request.head.ref }}
         run: |
           set -euo pipefail
+          if [ -z "$XATA_API_KEY" ]; then
+            echo "::error::XATA_API_KEY is empty — secrets not available in this run context"
+            exit 1
+          fi
           SAFE_REF=$(echo -n "$REF" | tr -c 'a-zA-Z0-9-_' '-' | cut -c1-50)
           BRANCH_NAME="preview-${SAFE_REF}"
           echo "Deleting Xata branch $BRANCH_NAME"
