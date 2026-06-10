@@ -49,19 +49,22 @@ export default async function BadgePage({
       <BadgeCard3D>
         <div className="w-full max-w-sm p-6 sm:w-96">
           <div className="flex items-center gap-4">
-            {badge.image ? (
-              // eslint-disable-next-line @next/next/no-img-element
-              <img
-                src={badge.image}
-                alt=""
-                referrerPolicy="no-referrer"
-                className="h-14 w-14 rounded-full border border-black/10 dark:border-white/10"
-              />
-            ) : (
-              <div className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-100 font-mono text-xl font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
-                {badge.name.charAt(0).toUpperCase()}
-              </div>
-            )}
+            <div className="relative shrink-0">
+              {badge.image ? (
+                // eslint-disable-next-line @next/next/no-img-element
+                <img
+                  src={badge.image}
+                  alt=""
+                  referrerPolicy="no-referrer"
+                  className="h-14 w-14 rounded-full border border-black/10 dark:border-white/10"
+                />
+              ) : (
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-100 font-mono text-xl font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                  {badge.name.charAt(0).toUpperCase()}
+                </div>
+              )}
+              {badge.isCourseComplete && <Mortarboard />}
+            </div>
             <div className="min-w-0">
               <h1 className="truncate font-mono text-lg font-semibold tracking-tight">
                 {badge.name}
@@ -141,5 +144,30 @@ export default async function BadgePage({
         Start learning Postgres →
       </Link>
     </div>
+  );
+}
+
+// The static -rotate-12 is the resting pose for prefers-reduced-motion; with
+// motion enabled the drop-in animation's fill-mode ends on the same tilt.
+function Mortarboard() {
+  return (
+    <svg
+      aria-hidden
+      viewBox="0 0 24 24"
+      className="absolute -top-4.5 -left-3.5 h-11 w-11 -rotate-12 animate-mortarboard-drop text-zinc-800 drop-shadow-sm motion-reduce:animate-none dark:text-zinc-100"
+    >
+      <path d="M12 3 22.8 8 12 13 1.2 8Z" fill="currentColor" />
+      <path
+        d="M6.2 10.4v3.1c0 1.7 2.6 3 5.8 3s5.8-1.3 5.8-3v-3.1l-5 2.3a2 2 0 0 1-1.6 0Z"
+        fill="currentColor"
+      />
+      <path
+        d="M21.6 9v4.3"
+        stroke="currentColor"
+        strokeWidth="1.6"
+        strokeLinecap="round"
+      />
+      <circle cx="21.6" cy="14.6" r="1.3" fill="currentColor" />
+    </svg>
   );
 }

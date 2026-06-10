@@ -13,6 +13,22 @@
   --font-mono: var(--font-geist-mono);
 }
 
+@theme {
+  --animate-mortarboard-drop: mortarboard-drop 0.8s
+    cubic-bezier(0.34, 1.56, 0.64, 1) 0.4s both;
+
+  @keyframes mortarboard-drop {
+    from {
+      opacity: 0;
+      transform: translateY(-1rem) rotate(8deg) scale(0.5);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0) rotate(-12deg) scale(1);
+    }
+  }
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --background: #0a0a0a;
