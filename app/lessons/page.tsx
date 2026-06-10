@@ -3,8 +3,10 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getModules } from "@/lib/lessons";
 import { getProgressCounts } from "@/lib/lesson-progress";
+import { getShareForUser } from "@/lib/badge-share";
 import { SignOutButton } from "./sign-out-button";
 import { SignInButton } from "@/app/sign-in-button";
+import { ShareProgressCard } from "./share-progress-card";
 
 type Bucket = "continue" | "completed" | "available";
 
@@ -60,6 +62,8 @@ export default async function DashboardPage() {
   const completedCount = states.filter((s) => s.bucket === "completed").length;
   const startedCount = states.filter((s) => s.bucket === "continue").length;
 
+  const share = session ? await getShareForUser(session.user.id) : null;
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
       <header>
@@ -74,7 +78,19 @@ export default async function DashboardPage() {
                 : "Short, hands-on Postgres exercises. Sign in to run them in your own sandbox and track your progress."}
             </p>
           </div>
-          <div className="shrink-0">{session ? <SignOutButton /> : <SignInButton />}</div>
+          <div className="flex shrink-0 items-center gap-2">
+            {session ? (
+              <>
+                <ShareProgressCard
+                  token={share?.token ?? null}
+                  enabled={share?.enabled ?? false}
+                />
+                <SignOutButton />
+              </>
+            ) : (
+              <SignInButton />
+            )}
+          </div>
         </div>
         {session && (
           <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
