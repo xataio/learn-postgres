@@ -45,9 +45,9 @@ export default async function BadgePage({
       : 0;
 
   return (
-    <div className="flex min-h-screen flex-col items-center justify-center px-6 py-16">
+    <div className="flex flex-1 flex-col items-center justify-center px-6 py-8">
       <BadgeCard3D>
-        <div className="w-full max-w-sm p-8 sm:w-96">
+        <div className="w-full max-w-sm p-6 sm:w-96">
           <div className="flex items-center gap-4">
             {badge.image ? (
               // eslint-disable-next-line @next/next/no-img-element
@@ -84,7 +84,7 @@ export default async function BadgePage({
             </div>
           </div>
 
-          <div className="mt-6">
+          <div className="mt-5">
             <div className="h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
               <div
                 className="h-full rounded-full bg-emerald-500 transition-[width]"
@@ -128,7 +128,7 @@ export default async function BadgePage({
             })}
           </ul>
 
-          <p className="mt-6 border-t border-black/5 pt-4 text-center font-mono text-xs text-zinc-400 dark:border-white/5">
+          <p className="mt-5 border-t border-black/5 pt-3 text-center font-mono text-xs text-zinc-400 dark:border-white/5">
             learn-postgres
           </p>
         </div>
@@ -136,7 +136,7 @@ export default async function BadgePage({
 
       <Link
         href="/"
-        className="mt-8 text-sm text-zinc-500 hover:text-zinc-700 hover:underline dark:hover:text-zinc-300"
+        className="mt-6 text-sm text-zinc-500 hover:text-zinc-700 hover:underline dark:hover:text-zinc-300"
       >
         Start learning Postgres →
       </Link>
