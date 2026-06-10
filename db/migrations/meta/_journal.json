@@ -22,6 +22,13 @@
       "when": 1779715891046,
       "tag": "0002_slippery_talos",
       "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1781103156616,
+      "tag": "0003_wealthy_kabuki",
+      "breakpoints": true
     }
   ]
 }

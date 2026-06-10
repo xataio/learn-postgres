@@ -3,8 +3,10 @@ import { headers } from "next/headers";
 import { auth } from "@/lib/auth";
 import { getModules } from "@/lib/lessons";
 import { getProgressCounts } from "@/lib/lesson-progress";
+import { getShareForUser } from "@/lib/badge-share";
 import { SignOutButton } from "./sign-out-button";
 import { SignInButton } from "@/app/sign-in-button";
+import { ShareProgressCard } from "./share-progress-card";
 
 type Bucket = "continue" | "completed" | "available";
 
@@ -60,6 +62,8 @@ export default async function DashboardPage() {
   const completedCount = states.filter((s) => s.bucket === "completed").length;
   const startedCount = states.filter((s) => s.bucket === "continue").length;
 
+  const share = session ? await getShareForUser(session.user.id) : null;
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
       <header>
@@ -103,6 +107,12 @@ export default async function DashboardPage() {
               <>Pick a lesson below to begin.</>
             )}
           </p>
+        )}
+        {session && (
+          <ShareProgressCard
+            token={share?.token ?? null}
+            enabled={share?.enabled ?? false}
+          />
         )}
       </header>
 

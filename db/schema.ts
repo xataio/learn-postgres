@@ -93,3 +93,16 @@ export const lessonProgress = pgTable(
   },
   (t) => [primaryKey({ columns: [t.userId, t.lessonSlug, t.checkId] })],
 );
+
+// One row per user who ever enabled progress sharing. The token is stable for
+// the lifetime of the row; `enabled` gates the public badge page, so
+// disabling and re-enabling keeps the same share link.
+export const badgeShare = pgTable("badge_share", {
+  userId: text("user_id")
+    .primaryKey()
+    .references(() => user.id, { onDelete: "cascade" }),
+  token: text("token").notNull().unique(),
+  enabled: boolean("enabled").notNull().default(true),
+  createdAt: timestamp("created_at").notNull().defaultNow(),
+  updatedAt: timestamp("updated_at").notNull().defaultNow(),
+});
