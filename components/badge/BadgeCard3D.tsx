@@ -39,7 +39,7 @@ export function BadgeCard3D({ children }: { children: ReactNode }) {
         ref={ref}
         onPointerMove={onPointerMove}
         onPointerLeave={onPointerLeave}
-        className="relative rounded-2xl border border-black/10 bg-white shadow-xl transition-transform duration-150 ease-out will-change-transform motion-reduce:!transform-none dark:border-white/10 dark:bg-zinc-900"
+        className="relative rounded-2xl border border-black/10 bg-white shadow-xl transition-transform duration-150 ease-out will-change-transform motion-reduce:!transform-none"
         style={{
           transform: "rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg))",
           transformStyle: "preserve-3d",
