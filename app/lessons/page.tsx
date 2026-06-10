@@ -78,7 +78,19 @@ export default async function DashboardPage() {
                 : "Short, hands-on Postgres exercises. Sign in to run them in your own sandbox and track your progress."}
             </p>
           </div>
-          <div className="shrink-0">{session ? <SignOutButton /> : <SignInButton />}</div>
+          <div className="flex shrink-0 items-center gap-2">
+            {session ? (
+              <>
+                <ShareProgressCard
+                  token={share?.token ?? null}
+                  enabled={share?.enabled ?? false}
+                />
+                <SignOutButton />
+              </>
+            ) : (
+              <SignInButton />
+            )}
+          </div>
         </div>
         {session && (
           <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
@@ -107,12 +119,6 @@ export default async function DashboardPage() {
               <>Pick a lesson below to begin.</>
             )}
           </p>
-        )}
-        {session && (
-          <ShareProgressCard
-            token={share?.token ?? null}
-            enabled={share?.enabled ?? false}
-          />
         )}
       </header>
 
