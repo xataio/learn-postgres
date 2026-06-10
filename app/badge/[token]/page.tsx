@@ -3,6 +3,7 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { getBadgeByToken } from "@/lib/badge-share";
 import { BadgeCard3D } from "@/components/badge/BadgeCard3D";
+import { ForceLightTheme } from "@/components/badge/ForceLightTheme";
 
 // Without this the route could be rendered once and cached, serving a badge
 // after its owner disabled sharing. Force a per-request DB lookup.
@@ -46,6 +47,7 @@ export default async function BadgePage({
 
   return (
     <div className="flex flex-1 flex-col items-center justify-center px-6 py-8">
+      <ForceLightTheme />
       <BadgeCard3D>
         <div className="w-full max-w-sm p-6 sm:w-96">
           <div className="flex items-center gap-4">
@@ -56,10 +58,10 @@ export default async function BadgePage({
                   src={badge.image}
                   alt=""
                   referrerPolicy="no-referrer"
-                  className="h-14 w-14 rounded-full border border-black/10 dark:border-white/10"
+                  className="h-14 w-14 rounded-full border border-black/10"
                 />
               ) : (
-                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-100 font-mono text-xl font-semibold text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">
+                <div className="flex h-14 w-14 items-center justify-center rounded-full bg-zinc-100 font-mono text-xl font-semibold text-zinc-600">
                   {badge.name.charAt(0).toUpperCase()}
                 </div>
               )}
@@ -72,7 +74,7 @@ export default async function BadgePage({
               <p
                 className={`text-sm ${
                   badge.isCourseComplete
-                    ? "font-medium text-emerald-600 dark:text-emerald-400"
+                    ? "font-medium text-emerald-600"
                     : "text-zinc-500"
                 }`}
               >
@@ -88,7 +90,7 @@ export default async function BadgePage({
           </div>
 
           <div className="mt-5">
-            <div className="h-2 overflow-hidden rounded-full bg-zinc-100 dark:bg-zinc-800">
+            <div className="h-2 overflow-hidden rounded-full bg-zinc-100">
               <div
                 className="h-full rounded-full bg-emerald-500 transition-[width]"
                 style={{ width: `${percent}%` }}
@@ -107,16 +109,16 @@ export default async function BadgePage({
                   key={m.title}
                   className="flex items-center justify-between gap-3"
                 >
-                  <span className="truncate text-sm text-zinc-700 dark:text-zinc-300">
+                  <span className="truncate text-sm text-zinc-700">
                     {m.title}
                   </span>
                   <span
                     className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
                       done
-                        ? "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300"
+                        ? "bg-emerald-50 text-emerald-700"
                         : m.completed > 0
-                          ? "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300"
-                          : "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300"
+                          ? "bg-amber-50 text-amber-700"
+                          : "bg-zinc-100 text-zinc-700"
                     }`}
                   >
                     {done && (
@@ -131,7 +133,7 @@ export default async function BadgePage({
             })}
           </ul>
 
-          <p className="mt-5 border-t border-black/5 pt-3 text-center font-mono text-xs text-zinc-400 dark:border-white/5">
+          <p className="mt-5 border-t border-black/5 pt-3 text-center font-mono text-xs text-zinc-400">
             learn-postgres
           </p>
         </div>
@@ -139,7 +141,7 @@ export default async function BadgePage({
 
       <Link
         href="/"
-        className="mt-6 text-sm text-zinc-500 hover:text-zinc-700 hover:underline dark:hover:text-zinc-300"
+        className="mt-6 text-sm text-zinc-500 hover:text-zinc-700 hover:underline"
       >
         Start learning Postgres →
       </Link>
@@ -154,7 +156,7 @@ function Mortarboard() {
     <svg
       aria-hidden
       viewBox="0 0 24 24"
-      className="absolute -top-4.5 -left-3.5 h-11 w-11 -rotate-12 animate-mortarboard-drop text-zinc-800 drop-shadow-sm motion-reduce:animate-none dark:text-zinc-100"
+      className="absolute -top-4.5 -left-3.5 h-11 w-11 -rotate-12 animate-mortarboard-drop text-zinc-800 drop-shadow-sm motion-reduce:animate-none"
     >
       <path d="M12 3 22.8 8 12 13 1.2 8Z" fill="currentColor" />
       <path
