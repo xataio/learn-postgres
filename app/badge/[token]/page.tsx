@@ -154,7 +154,7 @@ function Mortarboard() {
     <svg
       aria-hidden
       viewBox="0 0 24 24"
-      className="absolute -top-3.5 -left-2.5 h-8 w-8 -rotate-12 animate-mortarboard-drop text-zinc-800 drop-shadow-sm motion-reduce:animate-none dark:text-zinc-100"
+      className="absolute -top-4.5 -left-3.5 h-11 w-11 -rotate-12 animate-mortarboard-drop text-zinc-800 drop-shadow-sm motion-reduce:animate-none dark:text-zinc-100"
     >
       <path d="M12 3 22.8 8 12 13 1.2 8Z" fill="currentColor" />
       <path
