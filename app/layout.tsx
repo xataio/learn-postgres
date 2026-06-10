@@ -18,6 +18,9 @@ export const metadata: Metadata = {
   description: "Short, hands-on Postgres lessons in real disposable databases.",
 };
 
+// Runs before first paint so a stored theme choice never flashes the wrong mode.
+const themeInitScript = `try{var t=localStorage.getItem("learn:theme"),d=t?t==="dark":matchMedia("(prefers-color-scheme: dark)").matches;document.documentElement.classList.toggle("dark",d);document.documentElement.style.colorScheme=d?"dark":"light"}catch(e){}`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
@@ -26,9 +29,11 @@ export default function RootLayout({
   return (
     <html
       lang="en"
+      suppressHydrationWarning
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         {children}
         <PoweredByXata />
       </body>

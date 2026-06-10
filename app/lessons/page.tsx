@@ -7,6 +7,7 @@ import { getShareForUser } from "@/lib/badge-share";
 import { SignOutButton } from "./sign-out-button";
 import { SignInButton } from "@/app/sign-in-button";
 import { ShareProgressCard } from "./share-progress-card";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 type Bucket = "continue" | "completed" | "available";
 
@@ -79,6 +80,7 @@ export default async function DashboardPage() {
             </p>
           </div>
           <div className="flex shrink-0 items-center gap-2">
+            <ThemeToggle />
             {session ? (
               <>
                 <ShareProgressCard

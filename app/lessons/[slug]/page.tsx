@@ -11,6 +11,7 @@ import { SandboxSection } from "@/components/lesson/SandboxSection";
 import { SandboxLoading } from "@/components/lesson/SandboxLoading";
 import { RestoreScroll } from "@/components/lesson/RestoreScroll";
 import { getPassedCheckIds } from "@/lib/lesson-progress";
+import { ThemeToggle } from "@/components/ThemeToggle";
 
 type Params = { slug: string };
 
@@ -84,6 +85,7 @@ export default async function LessonPage({
               {passedCount}/{totalChecks} checks
             </span>
           )}
+          <ThemeToggle />
         </div>
       </header>
 
