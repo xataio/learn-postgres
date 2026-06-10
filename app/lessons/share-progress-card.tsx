@@ -93,15 +93,15 @@ export function ShareProgressCard({
 
       {enabled && token ? (
         <>
-          <div className="mt-3 flex flex-wrap items-center gap-2">
-            <input
-              ref={inputRef}
-              readOnly
-              value={badgeUrl}
-              onFocus={(e) => e.currentTarget.select()}
-              className="min-w-0 flex-1 rounded-md border border-black/10 bg-black/[.02] px-2 py-1.5 font-mono text-xs text-zinc-600 dark:border-white/10 dark:bg-white/[.04] dark:text-zinc-300"
-              aria-label="Public badge link"
-            />
+          <input
+            ref={inputRef}
+            readOnly
+            value={badgeUrl}
+            onFocus={(e) => e.currentTarget.select()}
+            className="mt-3 w-full rounded-md border border-black/10 bg-black/[.02] px-2 py-1.5 font-mono text-xs text-zinc-600 dark:border-white/10 dark:bg-white/[.04] dark:text-zinc-300"
+            aria-label="Public badge link"
+          />
+          <div className="mt-2 flex flex-wrap items-center gap-2">
             <button type="button" onClick={onCopy} className={BUTTON_STYLE}>
               {copied ? "Copied" : "Copy link"}
             </button>
