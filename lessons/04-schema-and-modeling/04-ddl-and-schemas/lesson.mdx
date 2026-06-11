@@ -1,0 +1,172 @@
+Every lesson so far handed you tables that already existed. This one puts you in the driver's seat: the *Data Definition Language* — `CREATE`, `ALTER`, and `DROP` — is how you make and reshape structure yourself. The seed provides a small `products` table; everything else you'll build, bend, and break with your own statements.
+
+<Run>
+SELECT * FROM products ORDER BY id;
+</Run>
+
+## CREATE TABLE
+
+A table definition is a list of columns, each with a type and optional constraints — exactly the syntax you've been reading in the seeds. Create a `suppliers` table next to the seeded `products`:
+
+<Run>
+CREATE TABLE suppliers (
+  id      int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name    text NOT NULL,
+  country text NOT NULL DEFAULT 'unknown'
+);
+</Run>
+
+`GENERATED ALWAYS AS IDENTITY` makes `id` number itself — the modern replacement for the older `serial` shorthand. Give the new table some rows:
+
+<Run>
+INSERT INTO suppliers (name, country) VALUES
+  ('Keychron', 'China'),
+  ('Logitech', 'Switzerland')
+RETURNING id, name, country;
+</Run>
+
+<Check id="suppliers-created">
+Create the `suppliers` table and insert the two rows above. We'll verify the table holds 2 rows.
+</Check>
+
+## ALTER TABLE: evolving a live table
+
+Schemas are never finished. `ALTER TABLE ... ADD COLUMN` bolts a new column onto an existing table — existing rows get the default, or `NULL` if there isn't one:
+
+<Run>
+ALTER TABLE products ADD COLUMN discontinued boolean NOT NULL DEFAULT false;
+</Run>
+
+<Run>
+SELECT name, price, discontinued FROM products ORDER BY id;
+</Run>
+
+Every existing product picked up `false` automatically. That's why `NOT NULL` plus `DEFAULT` is the safe recipe for adding a required column to a table that already has data — without the default, the `NOT NULL` would fail on the rows already there. (And it's cheap: Postgres stores the default once instead of rewriting every row.)
+
+## Renaming and retyping
+
+Let's practice the riskier alterations on a throwaway table, so the rest of the lesson keeps working whatever happens to it:
+
+<Run>
+CREATE TABLE scratch (
+  id    int,
+  label text
+);
+</Run>
+
+Renaming a column or a whole table is a metadata-only change — instant, no matter how big the table:
+
+<Run>
+ALTER TABLE scratch RENAME COLUMN label TO title;
+ALTER TABLE scratch RENAME TO experiments;
+</Run>
+
+Changing a column's *type* uses `ALTER COLUMN ... TYPE`. Widening `int` to `bigint` needs no extra help, because Postgres has a built-in cast:
+
+<Run>
+ALTER TABLE experiments ALTER COLUMN id TYPE bigint;
+</Run>
+
+But unlike a rename, most type changes rewrite the whole table — every row is converted to the new format, and the table is locked while that happens. Trivial on our four rows; a planned maintenance window at a few hundred million.
+
+When the conversion isn't obvious — say `text` to `int` — Postgres refuses to guess. You must spell out *how* with a `USING` expression:
+
+<Run>
+ALTER TABLE experiments ALTER COLUMN title TYPE int USING length(title);
+</Run>
+
+Without the `USING`, that statement fails: there's no automatic cast from `text` to `int`. The expression can be anything that produces the new type from the old value.
+
+## DROP: removing things
+
+`ALTER TABLE ... DROP COLUMN` and `DROP TABLE` do what they say — immediately, data included, no confirmation prompt:
+
+<Run>
+ALTER TABLE experiments DROP COLUMN title;
+</Run>
+
+Before dropping the whole table, let's give it a dependent object — a view that reads from it:
+
+<Run>
+CREATE VIEW experiment_ids AS SELECT id FROM experiments;
+</Run>
+
+Now try to drop the table. This one *fails*, on purpose:
+
+<Run>
+DROP TABLE experiments;
+</Run>
+
+Postgres refuses to silently break the view — the error names the dependent object and hints at the fix. `CASCADE` says "drop it and everything that depends on it":
+
+<Run>
+DROP TABLE experiments CASCADE;
+</Run>
+
+The notice lists the casualties (here, just the view). Treat `CASCADE` with respect: on a real database the dependency chain can be longer than you remember.
+
+One more wrinkle: dropping something that doesn't exist is an error — annoying in scripts that must be re-runnable. `IF EXISTS` turns the error into a harmless notice:
+
+<Run>
+DROP TABLE IF EXISTS experiments;
+</Run>
+
+## Schemas: namespaces for tables
+
+So far every table has lived in `public`. A *schema* in Postgres is a namespace — a folder for tables, views, and functions — that keeps apps, modules, or tenants from trampling each other's names:
+
+<Run>
+CREATE SCHEMA archive;
+CREATE TABLE archive.products (
+  id   int,
+  name text
+);
+</Run>
+
+`archive.products` and `public.products` coexist happily — same table name, different namespaces. A qualified name (`schema.table`) addresses either one explicitly:
+
+<Run>
+INSERT INTO archive.products (id, name) VALUES (1, 'Trackball (2019 model)');
+SELECT count(*)::int AS archived_products FROM archive.products;
+</Run>
+
+So how does Postgres know that plain `products` means `public.products`? The `search_path` — a list of schemas consulted, in order, for any unqualified name:
+
+<Run>
+SHOW search_path;
+</Run>
+
+`"$user", public` is the default: first a schema named after your role (which usually doesn't exist, so it's skipped), then `public`. That's the whole reason `public` feels special — it isn't, it's just the schema every new database ships with and the last stop on the default search path. Change the path and the *same* unqualified SQL resolves somewhere else:
+
+<Run>
+SET search_path TO archive, public;
+SELECT count(*)::int AS rows_in_products FROM products;
+</Run>
+
+One row, not four — `products` now resolves to `archive.products`, because `archive` comes first in the path. Multi-tenant apps lean on exactly this trick: one set of queries, a `search_path` per tenant. `SET` only lasts for your session; put things back before moving on:
+
+<Run>
+RESET search_path;
+</Run>
+
+## Your turn
+
+The shop needs inventory tracking. Add a `stock` column to `public.products`: type `int`, required, defaulting to `0` so existing rows stay valid — the same safe recipe from earlier:
+
+<Run>
+ALTER TABLE products ADD COLUMN stock int NOT NULL DEFAULT 0;
+</Run>
+
+<Check id="stock-column-added">
+Add the integer `stock` column to `products` with `ALTER TABLE`. We'll verify the column exists with the right type.
+</Check>
+
+## What you learned
+
+- `CREATE TABLE` defines columns with types, constraints, and identity columns for auto-numbering — and now you write them, not just read them.
+- `ALTER TABLE ADD COLUMN` evolves a live table; pair `NOT NULL` with a `DEFAULT` so existing rows stay valid.
+- Renames (`RENAME COLUMN`, `RENAME TO`) are instant metadata changes; type changes (`ALTER COLUMN ... TYPE`) usually rewrite the table and need `USING` when the cast isn't automatic.
+- `DROP TABLE` is immediate; it refuses if other objects depend on the table unless you say `CASCADE`; `IF EXISTS` makes drops safe to re-run.
+- Schemas are namespaces: `archive.products` and `public.products` coexist, qualified names pick one explicitly, and `search_path` decides what unqualified names mean — `public` is simply the default last stop.
+
+Up next: deciding *which* tables to create in the first place — keys, relationships, and the normal forms of database normalization.
