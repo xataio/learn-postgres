@@ -4,7 +4,7 @@
  *
  * Usage:
  *   npx tsx scripts/xata-cleanup.ts          # dry-run; lists what would be deleted
- *   npx tsx scripts/xata-cleanup.ts --force  # actually delete every branch except main
+ *   npx tsx scripts/xata-cleanup.ts --force  # delete every branch except main and tpl-* templates
  *
  * Standalone — doesn't import lib/xata.ts (which uses next/server-only and
  * can't be loaded outside the Next build).
@@ -69,12 +69,14 @@ async function main() {
     (noParent.length === 1 ? noParent[0] : undefined) ??
     branches.find((b) => referencedParents.has(b.id));
 
+  const keep = (b: Branch) =>
+    (parent && b.id === parent.id) || b.name.startsWith("tpl-");
+
   console.log(
     `Project ${projectId} has ${branches.length} branch(es).\n`,
   );
   for (const b of branches) {
-    const isParent = parent && b.id === parent.id;
-    const tag = isParent ? "  KEEP" : "DELETE";
+    const tag = keep(b) ? "  KEEP" : "DELETE";
     console.log(
       `  [${tag}] ${b.id}  ${b.name}  parent=${b.parentID ?? "(none)"}`,
     );
@@ -92,7 +94,7 @@ async function main() {
 
   console.log(`\nParent (kept): ${parent.name} [${parent.id}]`);
 
-  const toDelete = branches.filter((b) => b.id !== parent.id);
+  const toDelete = branches.filter((b) => !keep(b));
   if (toDelete.length === 0) {
     console.log("\nNothing to delete.");
     return;
