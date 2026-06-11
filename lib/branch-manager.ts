@@ -474,6 +474,7 @@ export type CleanupResult = {
   dropped: number;
   errors: { branchId: string; message: string }[];
   templates: { scanned: number; dropped: number };
+  orphans: { scanned: number; dropped: number };
 };
 
 /**
@@ -519,10 +520,57 @@ async function pruneStaleTemplates(
   return { scanned: templates.length, dropped };
 }
 
+// Untracked branches younger than this are skipped: an in-flight
+// ensureBranchForLesson creates the Xata branch up to ~2 minutes before the
+// userBranch row lands, and must not be swept mid-create.
+const ORPHAN_GRACE_MS = 60 * 60 * 1000;
+
+/**
+ * Delete orphaned Xata branches: anything that isn't the parent (`main`), a
+ * `tpl-*` template (owned by pruneStaleTemplates), or referenced by a
+ * `userBranch` row. Orphans accumulate when a delete fails after its row was
+ * removed (delete errors are deliberately swallowed on the user path) or when
+ * a create dies between createBranch and the row insert — the row-driven idle
+ * pass never sees them again.
+ */
+async function sweepOrphanBranches(
+  errors: { branchId: string; message: string }[],
+): Promise<{ scanned: number; dropped: number }> {
+  const parentId = await getParentBranchId();
+  const parentName = process.env.XATA_PARENT_BRANCH ?? "main";
+  const trackedRows = await db
+    .select({ id: userBranch.xataBranchId })
+    .from(userBranch);
+  const tracked = new Set(trackedRows.map((r) => r.id));
+
+  const branches = await listBranches();
+  const cutoff = Date.now() - ORPHAN_GRACE_MS;
+
+  let scanned = 0;
+  let dropped = 0;
+  for (const b of branches) {
+    if (b.id === parentId || b.name === parentName) continue;
+    if (b.name.startsWith("tpl-")) continue;
+    if (tracked.has(b.id)) continue;
+    scanned++;
+    const createdAt = Date.parse(b.createdAt);
+    if (!Number.isFinite(createdAt) || createdAt > cutoff) continue;
+    try {
+      await deleteBranch(b.id);
+      console.log(`[cleanup] dropped orphan branch ${b.id} (${b.name})`);
+      dropped++;
+    } catch (err) {
+      errors.push({ branchId: b.id, message: (err as Error).message });
+    }
+  }
+  return { scanned, dropped };
+}
+
 /**
  * Cron-driven cleanup: drop user branches that haven't been touched in
- * `idleDays`, then prune template branches no longer referenced by any lesson
- * or live user branch.
+ * `idleDays`, prune template branches no longer referenced by any lesson or
+ * live user branch, then sweep orphaned branches Xata knows about but the
+ * local DB doesn't.
  */
 export async function cleanupIdleBranches(
   idleDays = 7,
@@ -538,6 +586,7 @@ export async function cleanupIdleBranches(
     dropped: 0,
     errors: [],
     templates: { scanned: 0, dropped: 0 },
+    orphans: { scanned: 0, dropped: 0 },
   };
 
   for (const row of idle) {
@@ -566,6 +615,15 @@ export async function cleanupIdleBranches(
   } catch (err) {
     result.errors.push({
       branchId: "<template-prune>",
+      message: (err as Error).message,
+    });
+  }
+
+  try {
+    result.orphans = await sweepOrphanBranches(result.errors);
+  } catch (err) {
+    result.errors.push({
+      branchId: "<orphan-sweep>",
       message: (err as Error).message,
     });
   }
