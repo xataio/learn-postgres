@@ -116,18 +116,24 @@ SELECT ...
 
 ## Beyond SELECT
 
-A CTE body isn't limited to `SELECT`. It can wrap `INSERT`, `UPDATE`, or `DELETE` with a `RETURNING` clause, letting you modify rows and post-process the result in one statement:
+A CTE body isn't limited to `SELECT`. It can wrap `INSERT`, `UPDATE`, or `DELETE` with a `RETURNING` clause, letting you modify rows and post-process the result in one statement. Say the service only keeps a rolling window of listening history — purge everything from before June 5 and report how much was removed, in one go:
 
-```sql
+<Run>
 WITH purged AS (
   DELETE FROM plays
   WHERE played_at < '2024-06-05'
   RETURNING track_id
 )
 SELECT count(*) AS plays_removed FROM purged;
-```
+</Run>
 
-These are called data-modifying CTEs (and they are always materialized — the write happens exactly once). There's also `WITH RECURSIVE`, where a CTE references *itself* to walk trees and graphs — that one earns its own lesson later in the course.
+`plays_removed` is **4**: the `DELETE` ran, and the outer `SELECT` counted its `RETURNING` output — no second query, no window where another session sees the rows half-gone. These are called data-modifying CTEs (and they are always materialized — the write happens exactly once).
+
+<Check id="plays-purged">
+Run the purge above. We'll confirm only the 21 plays from June 5 onward remain.
+</Check>
+
+There's also `WITH RECURSIVE`, where a CTE references *itself* to walk trees and graphs — that one earns its own lesson later in the course.
 
 ## Your turn
 

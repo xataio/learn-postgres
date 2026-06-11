@@ -8,4 +8,10 @@ tags:
 authors:
   - exekias
 seed: seed.sql
-checks: []
+checks:
+  - id: plays-purged
+    type: row-count
+    description: Purge plays from before June 5 with a data-modifying CTE.
+    table: plays
+    expect:
+      rowCount: 21
