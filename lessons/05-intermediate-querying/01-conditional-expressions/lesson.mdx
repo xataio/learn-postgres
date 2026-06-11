@@ -144,9 +144,10 @@ That clamps every score into the 2–4 range — `GREATEST` sets the floor, `LEA
 
 ## Your turn
 
-Build a per-priority summary: for each `priority`, show the total number of tickets and how many are still open, sorted from `urgent` down to `low`. You'll need conditional aggregation for the open count and a `CASE` for the sort. Try it before peeking — one solution:
+Build a per-priority summary: for each `priority`, show the total number of tickets and how many are still open, sorted from `urgent` down to `low`, and save the result as a table called `priority_summary` (`CREATE TABLE … AS` stores any query's result). You'll need conditional aggregation for the open count and a `CASE` for the sort. Try it before peeking — one solution:
 
 <Run>
+CREATE TABLE priority_summary AS
 SELECT
   priority,
   count(\*) AS total,
@@ -160,6 +161,18 @@ ORDER BY CASE priority
   WHEN 'low'    THEN 4
 END;
 </Run>
+
+Have a look at what landed:
+
+<Run>
+SELECT * FROM priority_summary;
+</Run>
+
+Four rows, one per priority, with `urgent` on top — every ticket counted, and only the genuinely open ones in `still_open`.
+
+<Check id="priority-summary-saved">
+Create the `priority_summary` table with the query above. We'll confirm it holds one row per priority with the right totals and open counts.
+</Check>
 
 ## What you learned
 
