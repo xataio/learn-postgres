@@ -14,6 +14,12 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
+  // Resolves the og:image/twitter:image URLs emitted by the opengraph-image
+  // routes to absolute URLs. Without it Next falls back to the deployment URL,
+  // which is the preview origin on Vercel previews.
+  metadataBase: process.env.NEXT_PUBLIC_APP_URL
+    ? new URL(process.env.NEXT_PUBLIC_APP_URL)
+    : undefined,
   title: "Learn Postgres",
   description: "Short, hands-on Postgres lessons in real disposable databases.",
 };
