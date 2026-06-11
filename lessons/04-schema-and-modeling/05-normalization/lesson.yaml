@@ -1,0 +1,25 @@
+title: Normalization
+summary: Keys, relationships, and normal forms — turn one messy wide table into clean, related tables.
+estimatedMinutes: 15
+tags:
+  - normalization
+  - normal-forms
+  - keys
+  - relationships
+  - junction-table
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: order-items-table
+    type: schema-state
+    description: Create the order_items junction table with an integer quantity column.
+    table: order_items
+    column: quantity
+    columnType: integer
+  - id: order-items-filled
+    type: row-count
+    description: Fill order_items with the 12 line items from orders_flat.
+    table: order_items
+    expect:
+      rowCount: 12
