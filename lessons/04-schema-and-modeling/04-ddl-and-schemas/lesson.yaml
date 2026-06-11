@@ -1,0 +1,26 @@
+title: DDL and schemas
+summary: Create, alter, and drop tables yourself — then organize them into schema namespaces with search_path.
+estimatedMinutes: 14
+tags:
+  - ddl
+  - create-table
+  - alter-table
+  - drop-table
+  - schemas
+  - search-path
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: suppliers-created
+    type: row-count
+    description: Create the suppliers table and insert the two rows from the lesson.
+    table: suppliers
+    expect:
+      rowCount: 2
+  - id: stock-column-added
+    type: schema-state
+    description: Add an integer stock column to products with ALTER TABLE.
+    table: products
+    column: stock
+    columnType: integer
