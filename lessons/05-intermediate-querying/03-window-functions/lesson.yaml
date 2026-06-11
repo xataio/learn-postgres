@@ -1,0 +1,13 @@
+title: Window functions
+summary: Aggregate-style calculations that keep every row — OVER, PARTITION BY, and the ranking trio ROW_NUMBER, RANK, DENSE_RANK.
+estimatedMinutes: 13
+tags:
+  - window-functions
+  - over
+  - partition-by
+  - row-number
+  - rank
+authors:
+  - exekias
+seed: seed.sql
+checks: []

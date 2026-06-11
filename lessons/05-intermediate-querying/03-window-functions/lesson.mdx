@@ -1,0 +1,147 @@
+In the aggregations lesson, `GROUP BY` collapsed many rows into one summary row per group — and the detail rows were gone. A *window function* does the same kind of calculation but keeps every row, attaching the result alongside the original columns. "Each employee's salary *and* their department's average" in one query, no collapsing.
+
+The seed is a small company: a dozen `employees` across three departments, with a salary tie hidden in each one — we'll need those ties later.
+
+<Run>
+SELECT * FROM employees ORDER BY department, salary DESC;
+</Run>
+
+## Aggregates collapse — windows don't
+
+With `GROUP BY`, twelve employees become three rows. The averages are there, but the people are gone:
+
+<Run>
+SELECT department, round(avg(salary)) AS avg_salary
+FROM employees
+GROUP BY department
+ORDER BY department;
+</Run>
+
+Now the same `avg`, but written as a window function. `OVER ()` tells Postgres: compute the aggregate over a *window* of rows, and stamp the result on each row instead of collapsing them. Empty parentheses mean "the window is the whole result set":
+
+<Run>
+SELECT name, department, salary,
+       round(avg(salary) OVER ()) AS company_avg
+FROM employees
+ORDER BY salary DESC;
+</Run>
+
+Twelve rows in, twelve rows out — each one carrying the company-wide average. That's the whole trick: any aggregate followed by `OVER (…)` becomes a window function.
+
+## `PARTITION BY`: per-group values on every row
+
+`OVER ()` used one big window. `PARTITION BY` splits the rows into groups — like `GROUP BY`, but without the collapse. Each row sees the aggregate of *its own* partition:
+
+<Run>
+SELECT name, department, salary,
+       round(avg(salary) OVER (PARTITION BY department)) AS dept_avg,
+       salary - round(avg(salary) OVER (PARTITION BY department)) AS diff
+FROM employees
+ORDER BY department, salary DESC;
+</Run>
+
+Every engineer is compared to the engineering average, every salesperson to the sales average. Queries like "each row versus its group" are awkward with `GROUP BY` (you'd join the table back onto its own aggregate) — with a window, it's one expression.
+
+## `ORDER BY` inside the window: ranking
+
+Add `ORDER BY` *inside* the `OVER` clause and the rows within each partition get an ordering — which is what ranking functions feed on. `row_number()` hands out 1, 2, 3, … in that order, restarting for each partition:
+
+<Run>
+SELECT name, department, salary,
+       row_number() OVER (PARTITION BY department ORDER BY salary DESC) AS row_num
+FROM employees
+ORDER BY department, row_num;
+</Run>
+
+Note this `ORDER BY` is independent of the query's own `ORDER BY` at the end: one decides how rows are *numbered*, the other how the result is *displayed*.
+
+## ROW_NUMBER vs RANK vs DENSE_RANK
+
+What about ties? Ada and Grace both earn 120,000 — who is number one? The three ranking functions answer differently, so run them side by side:
+
+<Run>
+SELECT name, department, salary,
+       row_number() OVER (PARTITION BY department ORDER BY salary DESC) AS row_num,
+       rank()       OVER (PARTITION BY department ORDER BY salary DESC) AS rnk,
+       dense_rank() OVER (PARTITION BY department ORDER BY salary DESC) AS dense
+FROM employees
+ORDER BY department, salary DESC;
+</Run>
+
+Look at engineering:
+
+- `row_number()` ignores the tie and picks an arbitrary order: 1, 2, 3, 4. Same query, different day, Ada and Grace could swap.
+- `rank()` gives ties the same rank and then *skips*: 1, 1, 3, 4 — nobody is second, because two people are first. Olympic-style.
+- `dense_rank()` gives ties the same rank with *no gaps*: 1, 1, 2, 3.
+
+Pick by intent: a unique sequence (`row_number`), competition placement (`rank`), or "how many distinct levels above me" (`dense_rank`).
+
+## Top N per group
+
+The classic use: "the two best-paid people in each department". Your first instinct might be to filter on the rank directly:
+
+<Run>
+SELECT name, department, salary
+FROM employees
+WHERE rank() OVER (PARTITION BY department ORDER BY salary DESC) \<= 2;
+</Run>
+
+Postgres refuses: *window functions are not allowed in WHERE*. That's by design — `WHERE` filters rows *before* the window is computed, and the window needs the full row set to rank anything. The fix is to compute the rank in a subquery or CTE, then filter the finished result:
+
+<Run>
+WITH ranked AS (
+  SELECT name, department, salary,
+         rank() OVER (PARTITION BY department ORDER BY salary DESC) AS pay_rank
+  FROM employees
+)
+SELECT name, department, salary, pay_rank
+FROM ranked
+WHERE pay_rank \<= 2
+ORDER BY department, pay_rank;
+</Run>
+
+Notice sales returned *three* rows — Marcus and Priya tie at rank 2, and `rank()` keeps both. If you want exactly two per department no matter what, use `row_number()` instead. The tie-handling choice from the last section becomes a real decision here.
+
+## Named windows
+
+Repeating the same `OVER (…)` clause gets noisy. Declare it once with `WINDOW` and refer to it by name:
+
+<Run>
+SELECT name, department, salary,
+       rank()       OVER w AS pay_rank,
+       row_number() OVER w AS row_num
+FROM employees
+WINDOW w AS (PARTITION BY department ORDER BY salary DESC)
+ORDER BY department, row_num;
+</Run>
+
+Same results, one definition — handy once a query uses three or four window functions over the same window.
+
+## Your turn
+
+Every department also has a *lowest*-paid employee. Find exactly one per department — name, department, and salary — using the top-N pattern. Hint: order the window the other way, and think about which ranking function guarantees "exactly one".
+
+<Run>
+WITH ranked AS (
+  SELECT name, department, salary,
+         row_number() OVER (PARTITION BY department ORDER BY salary ASC) AS rn
+  FROM employees
+)
+SELECT name, department, salary
+FROM ranked
+WHERE rn = 1
+ORDER BY department;
+</Run>
+
+Three rows, one per department. `row_number()` (not `rank()`) is the safe choice when you need exactly one row — a tie at the bottom would make `rank() = 1` return both.
+
+## What you learned
+
+- `aggregate(…) OVER (…)` turns any aggregate into a window function: same math, no collapsing — every row keeps its detail and gains the result.
+- `OVER ()` windows over the whole result set; `OVER (PARTITION BY col)` gives each row the value for its own group.
+- `ORDER BY` inside `OVER` orders rows *within* each partition — the basis for ranking — and is independent of the query's display order.
+- Ties: `row_number()` numbers arbitrarily (1, 2, 3, 4), `rank()` skips after ties (1, 1, 3, 4), `dense_rank()` doesn't (1, 1, 2, 3).
+- Window functions can't go in `WHERE` — compute them in a CTE or subquery, then filter. That's the top-N-per-group pattern.
+- `WINDOW w AS (…)` names a window so several functions can share one definition.
+
+Up next: advanced window functions — running totals, peeking at neighboring rows with `LAG`/`LEAD`, and controlling the window frame.
