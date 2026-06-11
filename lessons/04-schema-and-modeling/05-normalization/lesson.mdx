@@ -1,0 +1,230 @@
+Normalization is the craft of deciding *what goes in which table*. The rules have intimidating names — first, second, third normal form — but they all chase one goal: **store every fact exactly once**. The fastest way to understand why is to work with a table that gets it wrong.
+
+The seed gives you `orders_flat`, a webshop's entire order history crammed into a single wide table. Each row is one line item, with the customer and product details copied onto it.
+
+<Run>
+SELECT * FROM orders_flat ORDER BY order_id, product_name;
+</Run>
+
+Twelve rows, and the same names, emails, and prices over and over. It looks harmless. It isn't.
+
+## Redundancy, measured
+
+Count how many times each customer's details are repeated:
+
+<Run>
+SELECT customer_email, customer_name, count(*) AS copies
+FROM orders_flat
+GROUP BY customer_email, customer_name
+ORDER BY copies DESC;
+</Run>
+
+Ada's name and email exist in five separate rows. That's five chances for them to disagree — and the same goes for every product's price. The textbook name for what happens next is an **anomaly**, and there are three kinds.
+
+## Update anomalies
+
+Ada changes her email address. An update has to touch every copy — and if it misses some, the database now quietly holds two "truths". Simulate a buggy update that only fixes order 101:
+
+<Run>
+UPDATE orders_flat
+SET customer_email = 'ada.lovelace@example.com'
+WHERE customer_email = 'ada@example.com' AND order_id = 101;
+
+SELECT DISTINCT customer_name, customer_email
+FROM orders_flat
+WHERE customer_name = 'Ada Lovelace';
+</Run>
+
+Two emails for one person, and no error anywhere. Which one is right? The table can't tell you. That's an **update anomaly**: redundant copies that can drift apart.
+
+Put it back before we move on — note that the fix itself has to touch all five rows:
+
+<Run>
+UPDATE orders_flat
+SET customer_email = 'ada@example.com'
+WHERE customer_name = 'Ada Lovelace';
+</Run>
+
+## Insert and delete anomalies
+
+Suppose the shop adds a webcam to the catalog. Where does it go? There's no row to put it in until somebody *orders* one:
+
+<Run>
+INSERT INTO orders_flat (product_name, product_price)
+VALUES ('Webcam', 59.00);
+</Run>
+
+Rejected — a product can't exist here without dragging a fake order along. That's an **insert anomaly**: you can't record one kind of fact without inventing another.
+
+The mirror image is the **delete anomaly**. Look at Marie's orders:
+
+<Run>
+SELECT order_id, product_name, quantity
+FROM orders_flat
+WHERE customer_email = 'marie@example.com';
+</Run>
+
+Delete those rows — say she cancels both orders — and Marie's name and email vanish from the database entirely. Deleting an order shouldn't erase a customer, but here the two facts live in the same rows.
+
+## Keys: what identifies a row?
+
+Notice something else: `orders_flat` has **no primary key**. Nothing stops an exact duplicate row from sneaking in. The closest thing to an identity here is the combination `(order_id, product_name)` — no two rows share both. A minimal combination like that is called a **candidate key**, and the one you crown as the official identity becomes the **primary key**.
+
+Keys matter for normalization because the normal forms are all statements about how non-key columns relate to the key.
+
+## The normal forms, by example
+
+**First normal form (1NF): every value is atomic.** One value per column per row — no arrays-in-a-string, no repeating `item1`, `item2`, `item3` columns. `orders_flat` actually passes this one. A version that wouldn't:
+
+```sql
+-- NOT 1NF: a list crammed into one column
+(101, 'Ada Lovelace', 'keyboard x1, cable x2')
+```
+
+You can't join, index, or constrain the inside of that string. Atomic values first; everything else builds on it.
+
+**Second normal form (2NF): no partial dependencies.** With the composite key `(order_id, product_name)`, every other column should depend on *both* parts. But check what `order_id` alone determines:
+
+<Run>
+SELECT order_id,
+       count(DISTINCT customer_email) AS emails,
+       count(DISTINCT order_date)     AS dates
+FROM orders_flat
+GROUP BY order_id
+ORDER BY order_id;
+</Run>
+
+Every order has exactly one customer and one date — those columns depend on just *half* the key. That's a partial dependency, and it's exactly why the customer is copied onto every line item of an order. Same story for `product_price`, which depends only on `product_name`.
+
+**Third normal form (3NF): no transitive dependencies.** `customer_name` doesn't depend on the key at all, really — it depends on `customer_email`, which depends on `order_id`. A non-key column determined by another non-key column is a transitive dependency, and it's why Ada's name rides along with her email everywhere.
+
+The whole ladder fits in one sentence: every non-key column must depend on **the key, the whole key, and nothing but the key**.
+
+## The split: one table per thing
+
+The cure for every anomaly above is the same — give each *thing* its own table, with its own key. Customers first. `CREATE TABLE`, then `INSERT … SELECT DISTINCT` to harvest the unique customers out of the mess:
+
+<Run>
+CREATE TABLE customers (
+  id    int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name  text NOT NULL,
+  email text NOT NULL UNIQUE
+);
+
+INSERT INTO customers (name, email)
+SELECT DISTINCT customer_name, customer_email
+FROM orders_flat
+ORDER BY customer_email;
+
+SELECT * FROM customers;
+</Run>
+
+Twelve redundant copies collapsed into three rows, each stored once. Products, same recipe:
+
+<Run>
+CREATE TABLE products (
+  id    int GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
+  name  text NOT NULL UNIQUE,
+  price numeric(8,2) NOT NULL CHECK (price >= 0)
+);
+
+INSERT INTO products (name, price)
+SELECT DISTINCT product_name, product_price
+FROM orders_flat
+ORDER BY product_name;
+
+SELECT * FROM products;
+</Run>
+
+## One-to-many: orders
+
+A customer places many orders; each order belongs to one customer. That's a **one-to-many** relationship, and it's modeled with a foreign key on the "many" side. To fill it, join the flat table to `customers` so each order picks up its customer's new `id`:
+
+<Run>
+CREATE TABLE orders (
+  id          int PRIMARY KEY,
+  customer_id int NOT NULL REFERENCES customers(id),
+  ordered_at  date NOT NULL
+);
+
+INSERT INTO orders (id, customer_id, ordered_at)
+SELECT DISTINCT f.order_id, c.id, f.order_date
+FROM orders_flat f
+JOIN customers c ON c.email = f.customer_email;
+
+SELECT count(*) AS orders FROM orders;
+</Run>
+
+Seven orders, each referencing its customer exactly once. The `DISTINCT` matters: an order with three line items appears three times in the flat table but must become one row here.
+
+## Your turn: the many-to-many junction
+
+Orders and products is a different shape — an order contains many products, and a product appears in many orders. A **many-to-many** relationship can't be modeled with a single foreign key on either side. It needs a third table, a **junction table**, holding one row per (order, product) pair. Create it:
+
+<Run>
+CREATE TABLE order_items (
+  order_id   int NOT NULL REFERENCES orders(id),
+  product_id int NOT NULL REFERENCES products(id),
+  quantity   int NOT NULL CHECK (quantity > 0),
+  PRIMARY KEY (order_id, product_id)
+);
+</Run>
+
+The composite primary key is doing real work — it's the candidate key we found earlier, now enforced. Note `quantity` lives here too: it describes the *pair*, not the order or the product alone.
+
+<Check id="order-items-table">
+Create the `order_items` table above — a junction table with a composite primary key and an integer `quantity` column.
+</Check>
+
+Now fill it, following the same pattern as `orders`: join the flat table to `products` by name to translate each line item into ids.
+
+<Run>
+INSERT INTO order_items (order_id, product_id, quantity)
+SELECT f.order_id, p.id, f.quantity
+FROM orders_flat f
+JOIN products p ON p.name = f.product_name;
+</Run>
+
+<Check id="order-items-filled">
+Run the insert above. All 12 line items from `orders_flat` should land in `order_items`.
+</Check>
+
+## The payoff
+
+The four tables can reproduce everything the wide table knew — that's what makes this a refactoring, not a data loss:
+
+<Run>
+SELECT o.id AS order_id, c.name AS customer, p.name AS product, oi.quantity
+FROM order_items oi
+JOIN orders    o ON o.id = oi.order_id
+JOIN customers c ON c.id = o.customer_id
+JOIN products  p ON p.id = oi.product_id
+ORDER BY o.id, p.name;
+</Run>
+
+And now replay the scenario that burned us earlier. Ada changes her email:
+
+<Run>
+UPDATE customers
+SET email = 'ada.lovelace@example.com'
+WHERE email = 'ada@example.com';
+</Run>
+
+One row updated. Every order follows along automatically through `customer_id` — there are no copies left to drift. The insert anomaly is gone too (a new product is just a row in `products`), and deleting Marie's orders would no longer erase Marie.
+
+## Pragmatic denormalization
+
+Is duplication always wrong? No — sometimes it's a deliberate trade-off. The classic example is hiding in this very schema: when a product's *price* changes, should old orders change with it? They shouldn't — an invoice is a historical fact. Real shops copy the price into the line item (`order_items.unit_price`) on purpose, freezing it at purchase time.
+
+Reporting tables, cached counters, and read-heavy aggregates are other common cases. The rule of thumb: normalize by default, and denormalize *consciously* — when you do duplicate, know which copy is authoritative and what keeps the others honest.
+
+## What you learned
+
+- Redundant copies breed **update, insert, and delete anomalies** — three flavors of the same disease.
+- A **candidate key** is a minimal combination that identifies a row; the **primary key** is the one you enforce.
+- **1NF**: atomic values. **2NF**: no column depends on part of a composite key. **3NF**: no non-key column depends on another non-key column.
+- The fix is one table per thing, wired together with foreign keys: **one-to-many** via a foreign key on the many side, **many-to-many** via a **junction table** with a composite primary key.
+- `CREATE TABLE` + `INSERT … SELECT DISTINCT` turns a messy wide table into clean ones.
+- Denormalization is sometimes right — but as a conscious trade-off, not an accident.
+
+Up next: Module 5 moves into intermediate querying — conditional expressions, CTEs, and window functions.
