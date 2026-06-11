@@ -1,0 +1,161 @@
+In the subqueries lesson you nested a `SELECT` inside a `FROM` clause and it worked — but you also had to read it inside-out. A **common table expression** (CTE) fixes that: `WITH name AS (...)` gives a subquery a name, and the rest of the query uses that name like a table. Same plan, far better prose.
+
+The seed is a tiny music-streaming service: `artists` have `tracks`, and every listen lands in `plays` with a timestamp.
+
+<Run>
+SELECT a.name, a.genre, t.title
+FROM artists a
+JOIN tracks t ON t.artist_id = a.id
+ORDER BY a.id, t.id;
+</Run>
+
+## The readability problem
+
+Question: which artists are played more than the average artist? Written with nothing but subqueries, the same per-artist rollup gets pasted in twice and you read it from the innermost parentheses outward:
+
+<Run>
+SELECT name, total_plays
+FROM (
+  SELECT a.name, count(\*) AS total_plays
+  FROM artists a
+  JOIN tracks t ON t.artist_id = a.id
+  JOIN plays p ON p.track_id = t.id
+  GROUP BY a.name
+) AS per_artist
+WHERE total_plays > (
+  SELECT avg(plays)
+  FROM (
+    SELECT count(\*) AS plays
+    FROM artists a
+    JOIN tracks t ON t.artist_id = a.id
+    JOIN plays p ON p.track_id = t.id
+    GROUP BY a.id
+  ) AS inner_counts
+)
+ORDER BY total_plays DESC;
+</Run>
+
+It works, but the interesting logic — "compare each artist to the average" — is buried under two copies of the same three-table join. Change the rollup and you must remember to change it in both places.
+
+## Name the step with `WITH`
+
+Here is the same query as a CTE. Define the rollup once, give it a name, and read top to bottom:
+
+<Run>
+WITH artist_plays AS (
+  SELECT a.name, count(*) AS total_plays
+  FROM artists a
+  JOIN tracks t ON t.artist_id = a.id
+  JOIN plays p ON p.track_id = t.id
+  GROUP BY a.name
+)
+SELECT name, total_plays
+FROM artist_plays
+WHERE total_plays > (SELECT avg(total_plays) FROM artist_plays)
+ORDER BY total_plays DESC;
+</Run>
+
+Two things happened. The query now reads like a recipe — "first compute `artist_plays`, then keep the above-average ones". And notice `artist_plays` appears **twice** in the main query: once in `FROM`, once inside the scalar subquery that computes the average. Define once, reference as often as you like — the duplication from the nested version is gone.
+
+## Chaining: each step builds on the last
+
+A `WITH` clause can hold several CTEs separated by commas, and each one can reference the ones before it. That turns a query into a pipeline: filter, then aggregate, then join back. Which tracks took off in the second half of June?
+
+<Run>
+WITH late_june AS (
+  SELECT \* FROM plays WHERE played_at >= '2024-06-15'
+),
+track_counts AS (
+  SELECT track_id, count(\*) AS plays
+  FROM late_june
+  GROUP BY track_id
+)
+SELECT t.title, a.name AS artist, tc.plays
+FROM track_counts tc
+JOIN tracks t ON t.id = tc.track_id
+JOIN artists a ON a.id = t.artist_id
+ORDER BY tc.plays DESC, t.title;
+</Run>
+
+`late_june` filters, `track_counts` aggregates over `late_june`, and the main query joins the result back to `tracks` and `artists` for human-readable output. Each step is small enough to verify on its own — while debugging, you can replace the main query with `SELECT * FROM track_counts` and inspect the intermediate result directly.
+
+## A CTE is just a named result set
+
+Anywhere a table can appear, a CTE name can appear: in `FROM`, in a `JOIN`, inside a subquery. Here one feeds an `IN` list:
+
+<Run>
+WITH heavy_rotation AS (
+  SELECT track_id
+  FROM plays
+  GROUP BY track_id
+  HAVING count(*) >= 4
+)
+SELECT title
+FROM tracks
+WHERE id IN (SELECT track_id FROM heavy_rotation)
+ORDER BY title;
+</Run>
+
+The CTE exists only for the duration of its statement — it is not a real table, leaves nothing behind, and needs no cleanup.
+
+## Materialization: mostly a non-issue
+
+Does Postgres compute the CTE into a temporary buffer, or fold it into the main query? Since Postgres 12, a CTE that is referenced once (and has no side effects) is **inlined** — the planner treats it exactly like the equivalent subquery, so `WHERE` conditions push down and indexes get used. A CTE referenced multiple times is usually materialized once and reused.
+
+You can override the default per CTE:
+
+```sql
+WITH artist_plays AS MATERIALIZED (
+  -- forced to compute once into a buffer, opaque to the planner
+  ...
+)
+SELECT ...
+```
+
+`AS MATERIALIZED` forces the pre-12 behavior — occasionally useful as an optimizer fence when you *want* an expensive step computed exactly once. `AS NOT MATERIALIZED` forces inlining. In practice: write for readability first, and reach for these keywords only after `EXPLAIN` shows a problem.
+
+## Beyond SELECT
+
+A CTE body isn't limited to `SELECT`. It can wrap `INSERT`, `UPDATE`, or `DELETE` with a `RETURNING` clause, letting you modify rows and post-process the result in one statement:
+
+```sql
+WITH purged AS (
+  DELETE FROM plays
+  WHERE played_at < '2024-06-05'
+  RETURNING track_id
+)
+SELECT count(*) AS plays_removed FROM purged;
+```
+
+These are called data-modifying CTEs (and they are always materialized — the write happens exactly once). There's also `WITH RECURSIVE`, where a CTE references *itself* to walk trees and graphs — that one earns its own lesson later in the course.
+
+## Your turn
+
+Using a chain of two CTEs, list each **genre** with its total play count, most-played first: first aggregate `plays` per track, then join that back through `tracks` to `artists` and roll up by `genre`. Try writing it yourself before peeking — here's one way:
+
+<Run>
+WITH track_plays AS (
+  SELECT track_id, count(*) AS plays
+  FROM plays
+  GROUP BY track_id
+)
+SELECT a.genre, sum(tp.plays) AS total_plays
+FROM track_plays tp
+JOIN tracks t ON t.id = tp.track_id
+JOIN artists a ON a.id = t.artist_id
+GROUP BY a.genre
+ORDER BY total_plays DESC;
+</Run>
+
+Electronic should come out on top — Lumen's `Afterglow` carries the month.
+
+## What you learned
+
+- `WITH name AS (...)` names a subquery; the main query uses the name like a table.
+- CTEs flatten inside-out nesting into a top-to-bottom pipeline — name your steps.
+- Multiple CTEs chain: each can build on the ones defined before it.
+- A CTE can be referenced any number of times — define once, reuse freely.
+- Postgres 12+ inlines single-use CTEs; `AS MATERIALIZED` / `AS NOT MATERIALIZED` override the default when `EXPLAIN` says so.
+- `WITH` can also wrap `INSERT`/`UPDATE`/`DELETE ... RETURNING`; recursive CTEs come later in the course.
+
+Up next: window functions — aggregates that peek at neighboring rows without collapsing them.

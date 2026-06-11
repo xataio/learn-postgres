@@ -1,0 +1,11 @@
+title: Common table expressions
+summary: WITH names your query's steps — turn nested subqueries into readable, chainable pipelines.
+estimatedMinutes: 12
+tags:
+  - cte
+  - with
+  - readability
+authors:
+  - exekias
+seed: seed.sql
+checks: []
