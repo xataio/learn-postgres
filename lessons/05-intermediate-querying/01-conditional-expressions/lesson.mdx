@@ -1,0 +1,174 @@
+So far your queries have returned column values as-is. Conditional expressions let you *compute* a value per row — bucket numbers into labels, swap NULL for something printable, or dodge a divide-by-zero — all inside the `SELECT` itself, no application code needed.
+
+The seed is a tiny help desk: one `tickets` table, deliberately riddled with NULLs — unassigned tickets, missing contact details, unrated satisfaction scores.
+
+<Run>
+SELECT * FROM tickets ORDER BY id;
+</Run>
+
+## CASE: SQL's if/else
+
+The searched form evaluates conditions top to bottom and returns the value of the **first** `WHEN` that's true. Perfect for bucketing a number into labels:
+
+<Run>
+SELECT subject, satisfaction,
+  CASE
+    WHEN satisfaction >= 4 THEN 'happy'
+    WHEN satisfaction >= 3 THEN 'neutral'
+    WHEN satisfaction IS NOT NULL THEN 'unhappy'
+  END AS mood
+FROM tickets
+ORDER BY id;
+</Run>
+
+Notice the unrated tickets: no `WHEN` matched (every comparison with NULL is unknown), there's no `ELSE`, so the result is `NULL`. **A `CASE` without an `ELSE` yields NULL** — add `ELSE 'not rated yet'` and run it again to see the difference.
+
+## The simple form: CASE expr WHEN value
+
+When every branch compares the *same* expression against constants, the simple form is tidier — write the expression once, then list the values:
+
+<Run>
+SELECT subject, status,
+  CASE status
+    WHEN 'open'    THEN 'needs attention'
+    WHEN 'pending' THEN 'waiting on customer'
+    ELSE 'done'
+  END AS next_step
+FROM tickets
+ORDER BY id;
+</Run>
+
+One trap: the simple form compares with `=`, and `NULL = NULL` is not true. So `CASE col WHEN NULL THEN …` never matches — when NULL is one of your branches, use the searched form with `WHEN col IS NULL`.
+
+## Custom sort orders
+
+`ORDER BY priority` would sort alphabetically: `high`, `low`, `normal`, `urgent`. Useless. A `CASE` in the `ORDER BY` maps each value to the rank you actually want:
+
+<Run>
+SELECT subject, priority, status
+FROM tickets
+WHERE status != 'closed'
+ORDER BY CASE priority
+  WHEN 'urgent' THEN 1
+  WHEN 'high'   THEN 2
+  WHEN 'normal' THEN 3
+  WHEN 'low'    THEN 4
+END;
+</Run>
+
+The expression just computes a number per row, and the sort uses that. The same trick works in `GROUP BY` and `WHERE` — `CASE` is an expression, so it's welcome anywhere an expression is.
+
+## Conditional aggregation: pivot-style counts
+
+Combine aggregates with conditions and one query produces a status-by-assignee grid — each column counts only the rows matching its filter:
+
+<Run>
+SELECT
+  assignee,
+  count(\*) FILTER (WHERE status = 'open')    AS open,
+  count(\*) FILTER (WHERE status = 'pending') AS pending,
+  count(\*) FILTER (WHERE status = 'closed')  AS closed
+FROM tickets
+GROUP BY assignee
+ORDER BY assignee;
+</Run>
+
+`FILTER` is the idiomatic Postgres spelling. The portable classic does the same with `CASE`:
+
+```sql
+sum(CASE WHEN status = 'open' THEN 1 ELSE 0 END) AS open
+```
+
+Spot the last row: the unassigned ticket grouped under a NULL `assignee`. Let's make that presentable.
+
+## COALESCE: the first non-NULL
+
+`COALESCE(a, b, c, …)` returns its first non-NULL argument. The everyday use is replacing NULL with a display value:
+
+<Run>
+SELECT
+  COALESCE(assignee, 'unassigned') AS agent,
+  count(*) AS tickets
+FROM tickets
+GROUP BY assignee
+ORDER BY tickets DESC;
+</Run>
+
+It takes any number of arguments, so you can express a whole fallback chain — "phone if we have it, else email, else give up":
+
+<Run>
+SELECT subject,
+  COALESCE(customer_phone, customer_email, 'no contact info') AS reach_at
+FROM tickets
+ORDER BY id;
+</Run>
+
+`COALESCE` also shines in `ORDER BY` — here unrated tickets sort as if they scored 0 instead of floating to one end:
+
+<Run>
+SELECT subject, satisfaction
+FROM tickets
+ORDER BY COALESCE(satisfaction, 0) DESC;
+</Run>
+
+(When you only need to control NULL placement, `ORDER BY satisfaction DESC NULLS LAST` is more direct — `COALESCE` is for when NULL should *count as* a value.) The same idea applies to join conditions: `ON COALESCE(a.col, '') = COALESCE(b.col, '')` lets two NULLs match where plain `=` never would.
+
+## NULLIF: turn a value into NULL
+
+`NULLIF(a, b)` is `COALESCE`'s inverse: it returns NULL when `a = b`, otherwise `a`. Its killer use is the divide-by-zero guard. One seed ticket has zero agent replies — a plain division would abort the whole query:
+
+<Run>
+SELECT subject, messages, agent_replies,
+  round(messages::numeric / NULLIF(agent_replies, 0), 1) AS msgs_per_reply
+FROM tickets
+ORDER BY id;
+</Run>
+
+When `agent_replies` is `0`, `NULLIF` turns the divisor into NULL, the division yields NULL instead of an error, and every other row computes normally. Want a number instead of NULL? Compose them: `COALESCE(messages / NULLIF(agent_replies, 0), 0)`.
+
+`NULLIF` is also handy for normalizing junk data — `NULLIF(trim(name), '')` converts empty strings into proper NULLs.
+
+## GREATEST and LEAST
+
+A brief but useful pair: they pick the largest or smallest of their arguments, row by row.
+
+<Run>
+SELECT subject, satisfaction,
+  LEAST(GREATEST(satisfaction, 2), 4) AS clamped
+FROM tickets
+WHERE satisfaction IS NOT NULL
+ORDER BY id;
+</Run>
+
+That clamps every score into the 2–4 range — `GREATEST` sets the floor, `LEAST` the ceiling. Unusually for SQL, they *ignore* NULL arguments rather than propagating them; they only return NULL when every argument is NULL.
+
+## Your turn
+
+Build a per-priority summary: for each `priority`, show the total number of tickets and how many are still open, sorted from `urgent` down to `low`. You'll need conditional aggregation for the open count and a `CASE` for the sort. Try it before peeking — one solution:
+
+<Run>
+SELECT
+  priority,
+  count(\*) AS total,
+  count(\*) FILTER (WHERE status = 'open') AS still_open
+FROM tickets
+GROUP BY priority
+ORDER BY CASE priority
+  WHEN 'urgent' THEN 1
+  WHEN 'high'   THEN 2
+  WHEN 'normal' THEN 3
+  WHEN 'low'    THEN 4
+END;
+</Run>
+
+## What you learned
+
+- Searched `CASE WHEN cond THEN …` evaluates top to bottom; the first true branch wins, and no `ELSE` means NULL.
+- Simple `CASE expr WHEN value` compares with `=` — so it can never match NULL.
+- `CASE` is an expression: use it in `ORDER BY` for custom sort orders, or inside aggregates.
+- `count(*) FILTER (WHERE …)` (or `sum(CASE …)`) pivots categories into columns.
+- `COALESCE` returns the first non-NULL argument — fallback chains, display defaults, NULL-tolerant sorts and joins.
+- `NULLIF(a, b)` returns NULL when they're equal — the classic `value / NULLIF(divisor, 0)` guard.
+- `GREATEST`/`LEAST` pick extremes per row and, unusually, skip NULL arguments.
+
+Up next: common table expressions — `WITH` queries that name intermediate results and untangle big SELECTs.
