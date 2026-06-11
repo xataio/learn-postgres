@@ -119,9 +119,10 @@ Same results, one definition — handy once a query uses three or four window fu
 
 ## Your turn
 
-Every department also has a *lowest*-paid employee. Find exactly one per department — name, department, and salary — using the top-N pattern. Hint: order the window the other way, and think about which ranking function guarantees "exactly one".
+Every department also has a *lowest*-paid employee. Find exactly one per department — name, department, and salary — using the top-N pattern, and save the result as a table called `lowest_paid` (`CREATE TABLE … AS` stores any query's result). Hint: order the window the other way, and think about which ranking function guarantees "exactly one". Try it yourself before peeking — here's one way:
 
 <Run>
+CREATE TABLE lowest_paid AS
 WITH ranked AS (
   SELECT name, department, salary,
          row_number() OVER (PARTITION BY department ORDER BY salary ASC) AS rn
@@ -129,11 +130,20 @@ WITH ranked AS (
 )
 SELECT name, department, salary
 FROM ranked
-WHERE rn = 1
-ORDER BY department;
+WHERE rn = 1;
+</Run>
+
+Have a look at what landed:
+
+<Run>
+SELECT * FROM lowest_paid ORDER BY department;
 </Run>
 
 Three rows, one per department. `row_number()` (not `rank()`) is the safe choice when you need exactly one row — a tie at the bottom would make `rank() = 1` return both.
+
+<Check id="lowest-paid-saved">
+Create the `lowest_paid` table with the query above. We'll confirm it holds exactly the three department minimums.
+</Check>
 
 ## What you learned
 

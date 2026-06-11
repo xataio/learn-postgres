@@ -10,4 +10,14 @@ tags:
 authors:
   - exekias
 seed: seed.sql
-checks: []
+checks:
+  - id: lowest-paid-saved
+    type: query-returns
+    description: Save each department's lowest-paid employee into a lowest_paid table.
+    sql: SELECT name, department, salary FROM lowest_paid ORDER BY department
+    expect:
+      rowCount: 3
+      rows:
+        - [Margaret, engineering, 98000]
+        - [Tom, sales, 76000]
+        - [Sofia, support, 58000]
