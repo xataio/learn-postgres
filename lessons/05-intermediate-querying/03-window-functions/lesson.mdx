@@ -78,7 +78,7 @@ Pick by intent: a unique sequence (`row_number`), competition placement (`rank`)
 
 ## Top N per group
 
-The classic use: "the two best-paid people in each department". Your first instinct might be to filter on the rank directly:
+The classic use: "the two best-paid people in each department". Your first instinct might be to filter on the rank directly — run it, and watch it fail:
 
 <Run>
 SELECT name, department, salary
