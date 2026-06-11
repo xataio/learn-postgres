@@ -1,0 +1,13 @@
+title: Conditional expressions
+summary: Compute values per row with CASE, fall back through NULLs with COALESCE, and guard divisions with NULLIF.
+estimatedMinutes: 12
+tags:
+  - case
+  - coalesce
+  - nullif
+  - conditional
+  - "null"
+authors:
+  - exekias
+seed: seed.sql
+checks: []
