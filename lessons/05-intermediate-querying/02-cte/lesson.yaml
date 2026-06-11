@@ -1,0 +1,17 @@
+title: Common table expressions
+summary: WITH names your query's steps — turn nested subqueries into readable, chainable pipelines.
+estimatedMinutes: 12
+tags:
+  - cte
+  - with
+  - readability
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: plays-purged
+    type: row-count
+    description: Purge plays from before June 5 with a data-modifying CTE.
+    table: plays
+    expect:
+      rowCount: 21
