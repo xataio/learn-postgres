@@ -1,0 +1,23 @@
+title: Advanced window functions
+summary: Running totals, peeking at neighbors with LAG/LEAD, and controlling the window frame.
+estimatedMinutes: 14
+tags:
+  - window-functions
+  - lag
+  - lead
+  - running-total
+  - frames
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: growth-view-created
+    type: query-returns
+    description: Create a view showing month-over-month revenue growth per product.
+    sql: SELECT product, month, revenue, prev_revenue, growth_pct FROM revenue_growth ORDER BY product, month LIMIT 3
+    expect:
+      rowCount: 3
+      rows:
+        - [Basic, "2024-01-01", 4200.00, null, null]
+        - [Basic, "2024-02-01", 4500.00, 4200.00, 7.14]
+        - [Basic, "2024-03-01", 4100.00, 4500.00, -8.89]

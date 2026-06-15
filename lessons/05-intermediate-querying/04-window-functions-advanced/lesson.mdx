@@ -1,0 +1,144 @@
+The previous lesson introduced window functions — `OVER`, `PARTITION BY`, and the ranking trio. Now we go further: running totals that accumulate row by row, `LAG`/`LEAD` to peek at neighboring rows, and explicit frame clauses that control exactly which rows feed the window calculation.
+
+The seed has monthly revenue for three SaaS products over six months — small enough to trace every result by hand.
+
+<Run>
+SELECT * FROM monthly_revenue ORDER BY product, month;
+</Run>
+
+## Running totals with `ORDER BY` in the frame
+
+Add `ORDER BY` inside a window that uses `SUM`, and Postgres computes a *cumulative* sum — each row adds itself to the running total:
+
+<Run>
+SELECT product, month, revenue,
+       sum(revenue) OVER (PARTITION BY product ORDER BY month) AS running_total
+FROM monthly_revenue
+ORDER BY product, month;
+</Run>
+
+For each product the running total grows month by month. January shows just January's number; February shows January + February; and so on. This works because `ORDER BY` inside `OVER` implicitly sets the frame to "all rows from the start of the partition up to (and including) the current row."
+
+## `LAG` and `LEAD`: peeking at neighbors
+
+`LAG(expr, offset)` returns the value from a previous row in the same partition; `LEAD` does the same looking forward. Default offset is 1. This is how you answer "what was last month's revenue?" without a self-join:
+
+<Run>
+SELECT product, month, revenue,
+       lag(revenue) OVER (PARTITION BY product ORDER BY month)  AS prev_month,
+       lead(revenue) OVER (PARTITION BY product ORDER BY month) AS next_month
+FROM monthly_revenue
+ORDER BY product, month;
+</Run>
+
+January has no previous row, so `LAG` returns `NULL`. June has no next row, so `LEAD` returns `NULL`. You can supply a default: `lag(revenue, 1, 0)` returns 0 instead of NULL when there's no prior row.
+
+## Month-over-month change
+
+Combine `LAG` with arithmetic to compute percentage change:
+
+<Run>
+SELECT product, month, revenue,
+       lag(revenue) OVER w AS prev_revenue,
+       round(
+         (revenue - lag(revenue) OVER w) * 100.0 / lag(revenue) OVER w, 2
+       ) AS growth_pct
+FROM monthly_revenue
+WINDOW w AS (PARTITION BY product ORDER BY month)
+ORDER BY product, month;
+</Run>
+
+Named windows (`WINDOW w AS …`) keep the query readable when you reference the same window multiple times.
+
+## Explicit frame clauses
+
+Every window has an implicit *frame* — the subset of partition rows that feed the aggregate. When you write `ORDER BY month` the default frame is:
+
+```sql
+ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW
+```
+
+That's why `SUM … ORDER BY` gives a running total. You can override it. A 3-month moving average uses the current row and one row on each side:
+
+<Run>
+SELECT product, month, revenue,
+       round(avg(revenue) OVER (
+         PARTITION BY product ORDER BY month
+         ROWS BETWEEN 1 PRECEDING AND 1 FOLLOWING
+       ), 2) AS moving_avg_3
+FROM monthly_revenue
+ORDER BY product, month;
+</Run>
+
+January (no preceding row) averages only two months; all other months average three. The frame adapts at partition edges.
+
+### Common frame boundaries
+
+| Boundary | Meaning |
+|----------|---------|
+| `UNBOUNDED PRECEDING` | First row of the partition |
+| `N PRECEDING` | N rows before current |
+| `CURRENT ROW` | The current row |
+| `N FOLLOWING` | N rows after current |
+| `UNBOUNDED FOLLOWING` | Last row of the partition |
+
+## `ROWS` vs `RANGE` vs `GROUPS`
+
+- **ROWS** counts individual physical rows — predictable and most common.
+- **RANGE** groups rows with the *same* `ORDER BY` value together, then applies the boundaries to those logical groups. If two rows share the same month, they're treated as a unit.
+- **GROUPS** (Postgres 11+) counts *peer groups* — like RANGE but boundary distances are in number of groups, not value differences.
+
+For most analytics `ROWS` is what you want. Reach for `RANGE` when ties in the ordering column should produce identical results.
+
+## `FIRST_VALUE`, `LAST_VALUE`, `NTH_VALUE`
+
+These pull a specific value from the current frame:
+
+<Run>
+SELECT product, month, revenue,
+       first_value(revenue) OVER w AS first_month_rev,
+       last_value(revenue)  OVER (
+         PARTITION BY product ORDER BY month
+         ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING
+       ) AS last_month_rev
+FROM monthly_revenue
+WINDOW w AS (PARTITION BY product ORDER BY month)
+ORDER BY product, month;
+</Run>
+
+Notice `LAST_VALUE` needs an explicit frame extending to `UNBOUNDED FOLLOWING` — otherwise the default frame ends at the current row and `LAST_VALUE` just returns the current row's value (a common gotcha).
+
+## Your turn
+
+Create a view called `revenue_growth` that shows, for each product and month: the revenue, the previous month's revenue (`prev_revenue`), and the month-over-month growth percentage (`growth_pct`) rounded to 2 decimal places. Use `LAG` and a named window.
+
+<Run>
+CREATE VIEW revenue_growth AS
+SELECT product, month, revenue,
+       lag(revenue) OVER w AS prev_revenue,
+       round(
+         (revenue - lag(revenue) OVER w) * 100.0 / lag(revenue) OVER w, 2
+       ) AS growth_pct
+FROM monthly_revenue
+WINDOW w AS (PARTITION BY product ORDER BY month);
+</Run>
+
+Verify it:
+
+<Run>
+SELECT * FROM revenue_growth ORDER BY product, month;
+</Run>
+
+<Check id="growth-view-created">
+Create the `revenue_growth` view with the columns `product`, `month`, `revenue`, `prev_revenue`, and `growth_pct`. We'll verify the first few rows match expected values.
+</Check>
+
+## What you learned
+
+- `SUM(…) OVER (ORDER BY …)` produces a running total because the default frame is `ROWS BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`.
+- `LAG(expr, n)` peeks backward n rows; `LEAD(expr, n)` peeks forward. Both accept a default value for edges.
+- Explicit frame clauses (`ROWS BETWEEN … AND …`) let you control exactly which rows feed the window calculation — essential for moving averages and sliding windows.
+- `ROWS` counts physical rows; `RANGE` groups by equal values; `GROUPS` counts peer groups.
+- `FIRST_VALUE`/`LAST_VALUE`/`NTH_VALUE` pull specific positional values from the frame — but `LAST_VALUE` needs an explicit frame to be useful.
+
+Next up: recursive CTEs — traversing hierarchies and graphs with `WITH RECURSIVE`.
