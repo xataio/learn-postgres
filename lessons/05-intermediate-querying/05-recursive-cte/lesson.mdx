@@ -1,0 +1,198 @@
+A regular CTE (`WITH`) gives a query a name and runs it once. A *recursive* CTE calls itself — it starts with a base case, then repeats a recursive step, accumulating rows until no new rows appear. This is how SQL handles trees, hierarchies, and graphs without application-level loops.
+
+The seed has two tables: an `org_chart` (a classic manager→employee tree) and `edges` (a small directed graph for path-finding).
+
+<Run>
+SELECT * FROM org_chart ORDER BY id;
+</Run>
+
+## The shape of `WITH RECURSIVE`
+
+Every recursive CTE has the same skeleton:
+
+```sql
+WITH RECURSIVE cte_name AS (
+  -- 1. Base case: the starting rows
+  SELECT …
+  UNION ALL
+  -- 2. Recursive step: joins back to itself
+  SELECT … FROM … JOIN cte_name ON …
+)
+SELECT * FROM cte_name;
+```
+
+Postgres executes it iteratively: run the base case, then run the recursive step using *only* the new rows from the previous iteration, appending results each time. It stops when the recursive step produces zero new rows.
+
+## Walking down: "Who reports to Bob?"
+
+Start at Bob (id 2), then repeatedly find everyone whose `manager_id` matches anyone already found:
+
+<Run>
+WITH RECURSIVE reports AS (
+  -- Base: Bob himself
+  SELECT id, name, title, manager_id, 0 AS depth
+  FROM org_chart
+  WHERE id = 2
+
+  UNION ALL
+
+  -- Recursive: anyone whose manager is already in 'reports'
+  SELECT e.id, e.name, e.title, e.manager_id, r.depth + 1
+  FROM org_chart e
+  JOIN reports r ON e.manager_id = r.id
+)
+SELECT name, title, depth
+FROM reports
+ORDER BY depth, name;
+</Run>
+
+Bob at depth 0, his direct reports at depth 1, their reports at depth 2, and so on. Each iteration adds one level of the tree.
+
+## Walking up: "Who is Eve's chain of command?"
+
+Flip direction — start at Eve and follow `manager_id` upward:
+
+<Run>
+WITH RECURSIVE chain AS (
+  SELECT id, name, manager_id, 1 AS level
+  FROM org_chart
+  WHERE name = 'Eve'
+
+  UNION ALL
+
+  SELECT o.id, o.name, o.manager_id, c.level + 1
+  FROM org_chart o
+  JOIN chain c ON o.id = c.manager_id
+)
+SELECT name, level
+FROM chain
+ORDER BY level;
+</Run>
+
+Eve → Bob → Alice. Three levels of management.
+
+## Building a path string
+
+Often you want the full path as a readable string. Concatenate as you recurse:
+
+<Run>
+WITH RECURSIVE chain AS (
+  SELECT id, name, manager_id, name AS path
+  FROM org_chart
+  WHERE manager_id IS NULL  -- start at root (CEO)
+
+  UNION ALL
+
+  SELECT o.id, o.name, o.manager_id, c.path || ' > ' || o.name
+  FROM org_chart o
+  JOIN chain c ON o.manager_id = c.id
+)
+SELECT name, path
+FROM chain
+ORDER BY path;
+</Run>
+
+Every employee now carries their full reporting chain from CEO down.
+
+## Depth limiting and safety
+
+A bug in your data (a cycle, or just a very deep tree) could make the recursion run forever. Guard with a depth counter:
+
+<Run>
+WITH RECURSIVE reports AS (
+  SELECT id, name, 0 AS depth
+  FROM org_chart WHERE id = 1
+
+  UNION ALL
+
+  SELECT e.id, e.name, r.depth + 1
+  FROM org_chart e
+  JOIN reports r ON e.manager_id = r.id
+  WHERE r.depth < 10  -- safety valve
+)
+SELECT name, depth FROM reports ORDER BY depth, name;
+</Run>
+
+The `WHERE r.depth < 10` prevents runaway recursion. For known-good data it's optional, but in production it's cheap insurance.
+
+## `UNION` vs `UNION ALL`
+
+Use `UNION ALL` (the default in recursive CTEs) when you know there are no duplicates — it's faster because Postgres skips duplicate checking. Use `UNION` (which deduplicates) when your graph might visit the same node twice — it acts as built-in cycle prevention:
+
+```sql
+WITH RECURSIVE traverse AS (
+  SELECT … UNION  -- deduplicates: each node appears at most once
+  SELECT …
+)
+```
+
+Postgres 14+ also offers the `CYCLE` clause for explicit cycle detection, but `UNION` is the classic approach.
+
+## Graph traversal: reachable nodes
+
+The `edges` table is a small directed graph. Find all nodes reachable from 'A':
+
+<Run>
+SELECT * FROM edges ORDER BY src, dst;
+</Run>
+
+<Run>
+WITH RECURSIVE reachable AS (
+  SELECT dst AS node, cost AS total_cost, src || ' -> ' || dst AS path
+  FROM edges
+  WHERE src = 'A'
+
+  UNION
+
+  SELECT e.dst, r.total_cost + e.cost, r.path || ' -> ' || e.dst
+  FROM edges e
+  JOIN reachable r ON e.src = r.node
+)
+SELECT node, total_cost, path
+FROM reachable
+ORDER BY total_cost;
+</Run>
+
+`UNION` (not `UNION ALL`) ensures we don't loop if the graph has cycles. This finds all paths — not necessarily the shortest — from A to every reachable node.
+
+## Your turn
+
+Create a table called `reporting_chains` that stores every employee's name (`employee` column) and their full management chain from the CEO down (`chain` column, formatted as `"Alice > Bob > David"`). The CEO's chain should be just their name. Use `CREATE TABLE … AS` with a recursive CTE.
+
+<Run>
+CREATE TABLE reporting_chains AS
+WITH RECURSIVE chain AS (
+  SELECT id, name AS employee, name AS chain
+  FROM org_chart
+  WHERE manager_id IS NULL
+
+  UNION ALL
+
+  SELECT o.id, o.name, c.chain || ' > ' || o.name
+  FROM org_chart o
+  JOIN chain c ON o.manager_id = c.id
+)
+SELECT employee, chain
+FROM chain;
+</Run>
+
+Verify:
+
+<Run>
+SELECT * FROM reporting_chains ORDER BY employee;
+</Run>
+
+<Check id="reporting-chain-table">
+Create the `reporting_chains` table with columns `employee` and `chain`. Each employee's chain should trace from the CEO down, separated by ` > `.
+</Check>
+
+## What you learned
+
+- `WITH RECURSIVE` defines a CTE that references itself — a base case plus a recursive step joined via `UNION ALL` (or `UNION` for deduplication).
+- Walking *down* a tree: start at the parent, recursively join children by their FK.
+- Walking *up*: start at the leaf, recursively join parents by the FK in reverse.
+- Path strings are built by concatenating at each recursion level.
+- Safety: add a `WHERE depth < N` guard or use `UNION` to prevent infinite loops.
+- Graph traversal works the same way — edges become the join condition; `UNION` prevents revisiting nodes.
+
+Next up: JSON and JSONB — storing, querying, and indexing semi-structured data inside Postgres.

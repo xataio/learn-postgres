@@ -1,0 +1,3 @@
+title: Postgres power types
+difficulty: advanced
+summary: Go beyond standard SQL types — JSON, arrays, full-text search, ranges, and domain types.

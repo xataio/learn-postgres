@@ -1,0 +1,194 @@
+Postgres has full-text search built in — no external engine needed. It tokenizes text into *lexemes* (normalized word forms), supports boolean queries, ranks results by relevance, and uses GIN indexes for speed. For many applications, this replaces Elasticsearch entirely.
+
+The seed has an `articles` table with titles and body text — enough to demonstrate searching, ranking, and indexing.
+
+<Run>
+SELECT id, title, author, published_at FROM articles ORDER BY id;
+</Run>
+
+## `tsvector`: the document representation
+
+A `tsvector` is the search-optimized form of text — words are normalized (lowercased, stemmed) and stored with their positions:
+
+<Run>
+SELECT to_tsvector('english', 'PostgreSQL provides built-in full-text search capabilities');
+</Run>
+
+"provides" becomes "provid" (stemmed), "capabilities" becomes "capabl". Stop words like "in" are removed. This normalized form is what Postgres searches against.
+
+## `tsquery`: the search query
+
+A `tsquery` represents what you're searching for, also normalized:
+
+<Run>
+SELECT to_tsquery('english', 'database & performance');
+</Run>
+
+Operators:
+- `&` — AND (both terms must appear)
+- `|` — OR (either term)
+- `!` — NOT (term must not appear)
+- `<->` — FOLLOWED BY (adjacency)
+
+## Matching: the `@@` operator
+
+The `@@` operator tests whether a `tsvector` matches a `tsquery`:
+
+<Run>
+SELECT title
+FROM articles
+WHERE to_tsvector('english', title || ' ' || body) @@ to_tsquery('english', 'postgresql & search');
+</Run>
+
+Articles that mention both "postgresql" and "search" in their title or body.
+
+## `plainto_tsquery` and `websearch_to_tsquery`
+
+For user input, use simpler parsers that don't require operator syntax:
+
+<Run>
+-- plainto_tsquery: all words joined with AND
+SELECT title
+FROM articles
+WHERE to_tsvector('english', body) @@ plainto_tsquery('english', 'database performance');
+</Run>
+
+<Run>
+-- websearch_to_tsquery: supports quotes and minus (Google-style)
+SELECT title
+FROM articles
+WHERE to_tsvector('english', body) @@ websearch_to_tsquery('english', '"full-text search" -elasticsearch');
+</Run>
+
+`websearch_to_tsquery` understands quoted phrases and `-` for exclusion — ideal for user-facing search boxes.
+
+## Ranking results: `ts_rank`
+
+Not all matches are equally relevant. `ts_rank` scores each match based on term frequency and position:
+
+<Run>
+SELECT title,
+       ts_rank(
+         to_tsvector('english', title || ' ' || body),
+         to_tsquery('english', 'postgresql')
+       ) AS rank
+FROM articles
+WHERE to_tsvector('english', title || ' ' || body) @@ to_tsquery('english', 'postgresql')
+ORDER BY rank DESC;
+</Run>
+
+Higher rank = more relevant. Articles that mention "postgresql" multiple times or in the title score higher.
+
+## Highlighting matches: `ts_headline`
+
+Show users *where* their search matched with highlighted snippets:
+
+<Run>
+SELECT title,
+       ts_headline('english', body,
+         to_tsquery('english', 'index'),
+         'StartSel=**, StopSel=**, MaxFragments=2, FragmentDelimiter= ... '
+       ) AS snippet
+FROM articles
+WHERE to_tsvector('english', body) @@ to_tsquery('english', 'index');
+</Run>
+
+`ts_headline` wraps matching terms with your chosen markers (here `**`) and returns relevant fragments.
+
+## Phrase search with `<->`
+
+Find words that appear adjacent to each other:
+
+<Run>
+SELECT title
+FROM articles
+WHERE to_tsvector('english', body) @@ to_tsquery('english', 'query <-> optimization');
+</Run>
+
+`<->` means "immediately followed by." Use `<2>` for "within 2 words."
+
+## Stored `tsvector` column
+
+Computing `to_tsvector` on every query is expensive for large tables. Store it in a dedicated column:
+
+<Run>
+ALTER TABLE articles ADD COLUMN search_vector tsvector;
+
+UPDATE articles
+SET search_vector = to_tsvector('english', title || ' ' || body);
+</Run>
+
+Verify:
+
+<Run>
+SELECT title, search_vector FROM articles WHERE id = 1;
+</Run>
+
+## GIN index for fast search
+
+A GIN index on the stored vector makes `@@` queries fast even on millions of rows:
+
+<Run>
+CREATE INDEX idx_articles_search ON articles USING gin (search_vector);
+</Run>
+
+Now `@@` queries use the index instead of scanning every row.
+
+## Keeping the vector in sync
+
+For production, use a trigger or a generated column to keep `search_vector` updated automatically when title or body changes:
+
+```sql
+-- Generated column approach (Postgres 12+):
+ALTER TABLE articles ADD COLUMN search_vector tsvector
+  GENERATED ALWAYS AS (to_tsvector('english', title || ' ' || body)) STORED;
+```
+
+Since we already created the column manually, the trigger approach would look like:
+
+```sql
+CREATE FUNCTION articles_search_update() RETURNS trigger AS $$
+BEGIN
+  NEW.search_vector := to_tsvector('english', NEW.title || ' ' || NEW.body);
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_articles_search
+  BEFORE INSERT OR UPDATE ON articles
+  FOR EACH ROW EXECUTE FUNCTION articles_search_update();
+```
+
+## Weighting: title vs body
+
+Give more importance to title matches using weights (A through D):
+
+<Run>
+SELECT title,
+       ts_rank(
+         setweight(to_tsvector('english', title), 'A') ||
+         setweight(to_tsvector('english', body), 'B'),
+         to_tsquery('english', 'postgresql')
+       ) AS weighted_rank
+FROM articles
+WHERE to_tsvector('english', title || ' ' || body) @@ to_tsquery('english', 'postgresql')
+ORDER BY weighted_rank DESC;
+</Run>
+
+Weight A terms count more than weight B — title mentions boost relevance.
+
+<Check id="search-index-created">
+Add the `search_vector` column to `articles` and create a GIN index named `idx_articles_search` on it. We'll verify the index exists.
+</Check>
+
+## What you learned
+
+- `to_tsvector` normalizes text into searchable lexemes; `to_tsquery` normalizes search terms.
+- The `@@` operator matches a vector against a query — this is the core search operation.
+- `plainto_tsquery` and `websearch_to_tsquery` parse user input without requiring operator syntax.
+- `ts_rank` scores relevance; `ts_headline` highlights matching fragments.
+- `<->` in tsquery means phrase/adjacency matching.
+- Store a `tsvector` column + GIN index for fast search on large tables.
+- `setweight` gives different importance to title vs body matches.
+
+Next up: ranges and generated columns — modeling intervals, exclusion constraints, and computed values.

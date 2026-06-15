@@ -1,0 +1,23 @@
+title: Recursive CTEs
+summary: Traverse hierarchies and graphs with WITH RECURSIVE — from org charts to shortest paths.
+estimatedMinutes: 15
+tags:
+  - recursive-cte
+  - with-recursive
+  - hierarchies
+  - graph-traversal
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: reporting-chain-table
+    type: query-returns
+    description: Create a reporting_chains table showing each employee's full chain to the CEO.
+    sql: SELECT employee, chain FROM reporting_chains ORDER BY employee LIMIT 4
+    expect:
+      rowCount: 4
+      rows:
+        - [Alice, "Alice"]
+        - [Bob, "Alice > Bob"]
+        - [Carol, "Alice > Carol"]
+        - [David, "Alice > Bob > David"]

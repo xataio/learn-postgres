@@ -1,0 +1,196 @@
+Postgres supports arrays as a native column type — not a JSON workaround, but a real typed array with its own operators, functions, and index support. Use them when you have a fixed-type ordered list that belongs to a single row: tags, scores, ingredients, permissions.
+
+The seed has a `recipes` table with a `text[]` column for ingredients and a `students` table with `int[]` exam scores.
+
+<Run>
+SELECT title, ingredients FROM recipes ORDER BY id;
+</Run>
+
+## Creating arrays
+
+Three equivalent syntaxes:
+
+```sql
+-- ARRAY constructor (most common)
+ARRAY['flour', 'tomato', 'basil']
+
+-- Array literal string
+'{"flour","tomato","basil"}'
+
+-- In a column definition
+ingredients text[] NOT NULL
+```
+
+<Run>
+SELECT ARRAY[1, 2, 3] AS nums, ARRAY['a', 'b', 'c'] AS letters;
+</Run>
+
+## Accessing elements
+
+Arrays are 1-indexed in Postgres (not 0-indexed like most languages):
+
+<Run>
+SELECT title,
+       ingredients[1] AS first_ingredient,
+       ingredients[2] AS second_ingredient,
+       array_length(ingredients, 1) AS num_ingredients
+FROM recipes
+ORDER BY id;
+</Run>
+
+Slices work too: `ingredients[2:4]` returns elements 2 through 4.
+
+<Run>
+SELECT title, ingredients[2:4] AS middle_ingredients
+FROM recipes
+WHERE id = 5;
+</Run>
+
+## Searching: `ANY` and `ALL`
+
+The `ANY` operator checks if a value matches any element in an array — this is the primary way to search arrays:
+
+<Run>
+SELECT title, ingredients
+FROM recipes
+WHERE 'egg' = ANY(ingredients);
+</Run>
+
+`ALL` requires the condition to match every element:
+
+<Run>
+SELECT name, scores
+FROM students
+WHERE 80 <= ALL(scores);
+</Run>
+
+Only students whose *every* score is 80 or above pass this filter.
+
+## Array operators: `@>`, `<@`, `&&`, `||`
+
+Arrays have containment and overlap operators — similar to JSONB but for typed arrays:
+
+| Operator | Meaning |
+|----------|---------|
+| `@>` | Left contains right |
+| `<@` | Left is contained by right |
+| `&&` | Arrays overlap (share any element) |
+| `\|\|` | Concatenate arrays |
+
+<Run>
+SELECT title
+FROM recipes
+WHERE ingredients @> ARRAY['tomato', 'olive oil'];
+</Run>
+
+Recipes that contain *both* tomato and olive oil. Compare with overlap:
+
+<Run>
+SELECT title
+FROM recipes
+WHERE ingredients && ARRAY['lime', 'lemon'];
+</Run>
+
+Recipes that contain lime *or* lemon (any overlap).
+
+## `unnest`: expanding arrays into rows
+
+`unnest` turns each array element into its own row — the array equivalent of `jsonb_array_elements`:
+
+<Run>
+SELECT title, unnest(ingredients) AS ingredient
+FROM recipes
+WHERE cuisine = 'Mexican'
+ORDER BY title, ingredient;
+</Run>
+
+This is powerful combined with aggregation. Count how many recipes use each ingredient:
+
+<Run>
+SELECT ingredient, count(*) AS recipe_count
+FROM recipes, unnest(ingredients) AS ingredient
+GROUP BY ingredient
+ORDER BY recipe_count DESC, ingredient
+LIMIT 10;
+</Run>
+
+## Aggregating back: `array_agg`
+
+The inverse of `unnest` — collapse rows back into an array:
+
+<Run>
+SELECT cuisine, array_agg(title ORDER BY title) AS recipe_list
+FROM recipes
+GROUP BY cuisine
+ORDER BY cuisine;
+</Run>
+
+## Array functions
+
+Useful functions for working with arrays:
+
+<Run>
+SELECT
+  array_length(ARRAY[1,2,3], 1) AS len,
+  array_position(ARRAY['a','b','c'], 'b') AS pos_of_b,
+  array_remove(ARRAY[1,2,3,2], 2) AS without_twos,
+  array_cat(ARRAY[1,2], ARRAY[3,4]) AS concatenated,
+  array_append(ARRAY[1,2], 3) AS appended,
+  array_prepend(0, ARRAY[1,2]) AS prepended;
+</Run>
+
+## Working with numeric arrays
+
+The `students` table stores exam scores. Combine `unnest` with aggregates to compute statistics:
+
+<Run>
+SELECT name,
+       scores,
+       (SELECT round(avg(s)) FROM unnest(scores) s) AS avg_score,
+       (SELECT min(s) FROM unnest(scores) s) AS min_score,
+       (SELECT max(s) FROM unnest(scores) s) AS max_score
+FROM students
+ORDER BY name;
+</Run>
+
+## Indexing arrays
+
+GIN indexes accelerate array containment and overlap queries:
+
+<Run>
+CREATE INDEX idx_recipes_ingredients ON recipes USING gin (ingredients);
+</Run>
+
+With this index, `@>`, `<@`, and `&&` queries on `ingredients` use the index instead of scanning every row.
+
+## Your turn
+
+Create a table called `egg_recipes` that stores the `title` of every recipe containing `'egg'` as an ingredient. Use `CREATE TABLE … AS` with the `ANY` operator.
+
+<Run>
+CREATE TABLE egg_recipes AS
+SELECT title
+FROM recipes
+WHERE 'egg' = ANY(ingredients);
+</Run>
+
+Verify:
+
+<Run>
+SELECT * FROM egg_recipes ORDER BY title;
+</Run>
+
+<Check id="egg-recipes-table">
+Create the `egg_recipes` table containing titles of all recipes that use egg. We'll verify it holds exactly the right recipes.
+</Check>
+
+## What you learned
+
+- Postgres arrays (`type[]`) are native, typed, ordered collections — 1-indexed.
+- `ANY(array)` tests membership; `ALL(array)` requires every element to match.
+- `@>` (contains), `<@` (contained by), and `&&` (overlaps) compare arrays set-wise.
+- `unnest()` expands an array into rows; `array_agg()` collapses rows back into an array.
+- Helper functions: `array_length`, `array_position`, `array_remove`, `array_append`, `array_cat`.
+- GIN indexes speed up containment and overlap queries on array columns.
+
+Next up: full-text search — tsvector, tsquery, and ranking results by relevance.

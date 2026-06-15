@@ -1,0 +1,23 @@
+title: JSON and JSONB
+summary: Store and query semi-structured data — operators, containment, path queries, and indexing strategies.
+estimatedMinutes: 15
+tags:
+  - json
+  - jsonb
+  - operators
+  - containment
+  - gin-index
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: wireless-products-view
+    type: query-returns
+    description: Create a view listing wireless products with their brand and name.
+    sql: SELECT name, brand FROM wireless_products ORDER BY name
+    expect:
+      rowCount: 3
+      rows:
+        - [Mechanical Keyboard, Keychron]
+        - [Noise-Canceling Headphones, Sony]
+        - [Wireless Mouse, Logitech]

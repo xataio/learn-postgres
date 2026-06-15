@@ -1,0 +1,195 @@
+Postgres has first-class JSON support — not "store a string and parse it later," but a dedicated binary format (`jsonb`) with operators, indexes, and containment checks that run inside the database engine. Use it when part of your data is semi-structured or varies per row while the rest stays relational.
+
+The seed has a `products` table with a `jsonb` column `attrs` holding variable metadata (brand, color, tags), and an `events` table with free-form analytics payloads.
+
+<Run>
+SELECT name, price, attrs FROM products ORDER BY id;
+</Run>
+
+## `json` vs `jsonb`
+
+Postgres offers two types:
+
+| | `json` | `jsonb` |
+|---|---|---|
+| Storage | Exact text (preserves whitespace, key order) | Parsed binary (deduplicates keys, no whitespace) |
+| Speed | Reparsed on every access | Pre-parsed, operator-ready |
+| Indexing | No | GIN indexes |
+
+Use `jsonb` almost always. Reach for `json` only when you need to preserve the exact input text (rare).
+
+## Extracting values: `->` and `->>`
+
+Two core operators:
+
+- `->` extracts a JSON element (returns `jsonb`)
+- `->>` extracts as `text`
+
+<Run>
+SELECT name,
+       attrs -> 'brand' AS brand_json,
+       attrs ->> 'brand' AS brand_text,
+       attrs -> 'tags' AS tags
+FROM products
+ORDER BY id;
+</Run>
+
+Notice the difference: `->` keeps the JSON type (quoted string, array), while `->>` gives you a plain text value. Use `->>` when you want to compare or display; use `->` when you'll dig deeper into nested structures.
+
+## Nested access
+
+Chain operators for nested objects. The standing desk has a `height_range` object:
+
+<Run>
+SELECT name,
+       attrs -> 'height_range' ->> 'min_cm' AS min_height,
+       attrs -> 'height_range' ->> 'max_cm' AS max_height
+FROM products
+WHERE attrs ? 'height_range';
+</Run>
+
+The `?` operator tests whether a key exists at the top level.
+
+## Path extraction: `#>` and `#>>`
+
+For deeply nested data, path operators take an array of keys:
+
+<Run>
+SELECT event_type,
+       payload #>> '{items,0,product_id}' AS first_item_product
+FROM events
+WHERE event_type = 'purchase';
+</Run>
+
+`#>>` navigates `payload.items[0].product_id` in one expression — cleaner than chaining `->` three times.
+
+## Containment: `@>`
+
+The `@>` operator asks "does the left side contain the right side?" — perfect for filtering:
+
+<Run>
+SELECT name, attrs ->> 'brand' AS brand
+FROM products
+WHERE attrs @> '{"wireless": true}';
+</Run>
+
+This finds all products where `attrs` contains `{"wireless": true}` as a subset. It's both readable and indexable (GIN indexes accelerate `@>` queries).
+
+## Checking keys: `?`, `?|`, `?&`
+
+- `?` — does the key exist?
+- `?|` — does *any* of these keys exist?
+- `?&` — do *all* of these keys exist?
+
+<Run>
+SELECT name,
+       attrs ? 'wireless' AS has_wireless_key,
+       attrs ?| array['battery_hours', 'dpi'] AS has_battery_or_dpi,
+       attrs ?& array['brand', 'color'] AS has_brand_and_color
+FROM products
+ORDER BY id;
+</Run>
+
+## Array operations inside JSONB
+
+The `tags` array inside `attrs` can be queried with containment:
+
+<Run>
+SELECT name, attrs -> 'tags' AS tags
+FROM products
+WHERE attrs -> 'tags' @> '"bluetooth"';
+</Run>
+
+A JSON array contains a scalar if that scalar appears as an element. You can also check for multiple tags:
+
+<Run>
+SELECT name, attrs -> 'tags' AS tags
+FROM products
+WHERE attrs -> 'tags' @> '["adjustable", "electric"]';
+</Run>
+
+## Expanding JSON arrays: `jsonb_array_elements`
+
+Turn a JSON array into rows:
+
+<Run>
+SELECT name, tag.value AS tag
+FROM products,
+     jsonb_array_elements_text(attrs -> 'tags') AS tag(value)
+ORDER BY name, tag;
+</Run>
+
+This is the JSON equivalent of `unnest()` for Postgres arrays — we'll cover those in the next lesson.
+
+## Building and modifying JSON
+
+Combine values into JSON objects and update existing ones:
+
+<Run>
+SELECT name,
+       attrs || '{"in_stock": true}' AS with_stock,
+       attrs - 'color' AS without_color
+FROM products
+WHERE id = 1;
+</Run>
+
+- `||` merges two JSONB values (right side wins on conflicts)
+- `-` removes a key
+
+For deeper modifications, `jsonb_set` changes a nested value:
+
+<Run>
+SELECT name,
+       jsonb_set(attrs, '{color}', '"red"') AS recolored
+FROM products
+WHERE id = 1;
+</Run>
+
+## Indexing JSONB
+
+A GIN index on a JSONB column accelerates `@>`, `?`, `?|`, `?&` queries:
+
+<Run>
+CREATE INDEX idx_products_attrs ON products USING gin (attrs);
+</Run>
+
+For specific key lookups you can also index expressions:
+
+<Run>
+CREATE INDEX idx_products_brand ON products ((attrs ->> 'brand'));
+</Run>
+
+The expression index helps queries like `WHERE attrs ->> 'brand' = 'Sony'` — a standard B-tree on the extracted value.
+
+## Your turn
+
+Create a view called `wireless_products` with two columns: `name` and `brand` (as text). It should return only products where `attrs` contains `{"wireless": true}`. Use the `@>` operator for filtering and `->>` for extracting the brand.
+
+<Run>
+CREATE VIEW wireless_products AS
+SELECT name, attrs ->> 'brand' AS brand
+FROM products
+WHERE attrs @> '{"wireless": true}';
+</Run>
+
+Verify:
+
+<Run>
+SELECT * FROM wireless_products ORDER BY name;
+</Run>
+
+<Check id="wireless-products-view">
+Create the `wireless_products` view that filters products by `{"wireless": true}` containment and exposes `name` and `brand` columns.
+</Check>
+
+## What you learned
+
+- `jsonb` is Postgres's binary JSON type — pre-parsed, indexable, and the right default choice over `json`.
+- `->` extracts as JSON; `->>` extracts as text. Chain them for nested access, or use `#>>` with a path array.
+- `@>` (containment) is the workhorse for filtering: "does this document contain this subset?"
+- `?`, `?|`, `?&` test key existence at the top level.
+- `jsonb_array_elements` / `jsonb_array_elements_text` expand JSON arrays into rows.
+- `||` merges, `-` removes keys, `jsonb_set` modifies nested values.
+- GIN indexes accelerate containment and key-existence queries on JSONB columns.
+
+Next up: arrays — Postgres's native array type for ordered lists of values.

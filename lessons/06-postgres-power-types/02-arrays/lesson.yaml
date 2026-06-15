@@ -1,0 +1,23 @@
+title: Arrays
+summary: Native array columns — construction, access, searching with ANY/ALL, and unnest for row expansion.
+estimatedMinutes: 13
+tags:
+  - arrays
+  - unnest
+  - any
+  - all
+  - array-operators
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: egg-recipes-table
+    type: query-returns
+    description: Create a table of recipes that contain egg as an ingredient.
+    sql: SELECT title FROM egg_recipes ORDER BY title
+    expect:
+      rowCount: 3
+      rows:
+        - [Caesar Salad]
+        - [Pad Thai]
+        - [Pasta Carbonara]
