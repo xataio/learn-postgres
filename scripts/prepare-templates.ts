@@ -22,7 +22,7 @@ import { config } from "dotenv";
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import yaml from "js-yaml";
+import { load } from "js-yaml";
 import { Client } from "pg";
 import { lessonFileSchema } from "../lib/lesson-schema";
 import { discoverLessons } from "../lib/lesson-discovery";
@@ -51,7 +51,7 @@ async function loadLessonSeeds(): Promise<LessonSeed[]> {
   for (const { slug, dir } of entries) {
     const yamlPath = join(dir, "lesson.yaml");
     if (!existsSync(yamlPath)) throw new Error(`${slug}: missing lesson.yaml`);
-    const meta = lessonFileSchema.parse(yaml.load(await readFile(yamlPath, "utf8")));
+    const meta = lessonFileSchema.parse(load(await readFile(yamlPath, "utf8")));
     const seedPath = join(dir, meta.seed);
     const seedSql = existsSync(seedPath) ? await readFile(seedPath, "utf8") : "";
     if (!seedSql.trim()) throw new Error(`${slug}: seed "${meta.seed}" is empty`);
