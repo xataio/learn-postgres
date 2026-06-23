@@ -1,7 +1,7 @@
 import { readdir, readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import yaml from "js-yaml";
+import { load } from "js-yaml";
 import {
   moduleFileSchema,
   parseOrderedName,
@@ -67,7 +67,7 @@ export async function discoverLessons(): Promise<LessonEntry[]> {
       throw new Error(`${modDir.name}: missing module.yaml`);
     }
     const moduleFile = moduleFileSchema.parse(
-      yaml.load(await readFile(moduleYamlPath, "utf8")),
+      load(await readFile(moduleYamlPath, "utf8")),
     );
     const moduleMeta: ModuleMeta = {
       slug: parsedMod.slug,

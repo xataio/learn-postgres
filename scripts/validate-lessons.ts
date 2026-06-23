@@ -17,7 +17,7 @@
 import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
-import yaml from "js-yaml";
+import { load } from "js-yaml";
 import { lessonFileSchema } from "../lib/lesson-schema";
 import { discoverLessons, type LessonEntry } from "../lib/lesson-discovery";
 
@@ -36,7 +36,7 @@ async function validateOne(entry: LessonEntry): Promise<Result> {
 
   let meta;
   try {
-    meta = lessonFileSchema.parse(yaml.load(await readFile(yamlPath, "utf8")));
+    meta = lessonFileSchema.parse(load(await readFile(yamlPath, "utf8")));
   } catch (err) {
     errors.push(`lesson.yaml invalid: ${(err as Error).message}`);
     return { slug, ok: false, errors };

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import { cache } from "react";
-import yaml from "js-yaml";
+import { load } from "js-yaml";
 import {
   lessonFileSchema,
   type Check,
@@ -27,7 +27,7 @@ async function loadOne(entry: LessonEntry): Promise<Lesson> {
   if (!existsSync(yamlPath)) throw new Error(`${slug}: missing lesson.yaml`);
   if (!existsSync(mdxPath)) throw new Error(`${slug}: missing lesson.mdx`);
 
-  const file = lessonFileSchema.parse(yaml.load(await readFile(yamlPath, "utf8")));
+  const file = lessonFileSchema.parse(load(await readFile(yamlPath, "utf8")));
   const meta: LessonMeta = { ...file, slug, order, module: moduleMeta };
 
   const mdxSource = await readFile(mdxPath, "utf8");
