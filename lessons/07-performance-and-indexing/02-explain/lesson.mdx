@@ -4,8 +4,8 @@ The seed is a classic pair of tables: ~4,000 `customers` and ~40,000 `orders`, w
 
 <Run>
 SELECT
-  (SELECT count(*) FROM customers) AS customers,
-  (SELECT count(*) FROM orders)    AS orders;
+  (SELECT count(\*) FROM customers) AS customers,
+  (SELECT count(\*) FROM orders)    AS orders;
 </Run>
 
 ## EXPLAIN shows the plan without running the query
