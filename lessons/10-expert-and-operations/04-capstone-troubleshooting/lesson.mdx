@@ -1,0 +1,143 @@
+This is where it all comes together. A page is timing out, and the query behind it is "show me a customer's recent orders, newest first." You have the tools now — `EXPLAIN`, indexes, an eye for a bad plan. Let's run a real investigation from complaint to fix.
+
+The seed loaded 300,000 orders across 5,000 customers, with no index beyond the primary key. Get your bearings first:
+
+<Run>
+SELECT count(*) FROM orders;
+</Run>
+
+## The complaint: one customer's recent orders
+
+Here is the query the app runs — the ten most recent orders for a single customer:
+
+<Run>
+SELECT id, created_at, status, amount
+FROM orders
+WHERE customer_id = 42
+ORDER BY created_at DESC
+LIMIT 10;
+</Run>
+
+It returns instantly *as text*, but that tells you nothing — the result is tiny. The cost is in how Postgres found those rows. Never guess; measure.
+
+## Step 1 — reproduce and measure
+
+`EXPLAIN (ANALYZE, BUFFERS)` actually runs the query and reports what happened: the plan the planner chose, its row estimates versus reality, the time each node took, and how many pages it read. Run it on the slow query:
+
+<Run>
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, created_at, status, amount
+FROM orders
+WHERE customer_id = 42
+ORDER BY created_at DESC
+LIMIT 10;
+</Run>
+
+You'll get something like this (your exact numbers will differ):
+
+```text
+ Limit  (cost=8523.19..8523.21 rows=10 ...) (actual time=41.203..41.205 rows=10 ...)
+   Buffers: shared hit=1936
+   ->  Sort  (cost=8523.19..8523.34 rows=60 ...) (actual time=41.201..41.202 ...)
+         Sort Key: created_at DESC
+         Sort Method: top-N heapsort  Memory: 27kB
+         ->  Seq Scan on orders  (cost=0.00..8521.89 rows=60 ...)
+               (actual time=0.312..41.150 rows=60 ...)
+               Filter: (customer_id = 42)
+               Rows Removed by Filter: 299940
+ Planning Time: 0.140 ms
+ Execution Time: 41.240 ms
+```
+
+Read it bottom-up, and two lines tell the whole story:
+
+- **`Seq Scan on orders`** — Postgres read the *entire* table to answer a question about one customer.
+- **`Rows Removed by Filter: 299940`** — it inspected 300,000 rows and threw away all but ~60. That is 99.98% wasted work.
+
+Then a **`Sort`** on `created_at DESC` on top, before the `LIMIT` could take ten. On 300k rows this adds milliseconds; multiply by every customer hitting the page and you have your timeout.
+
+On a table this size Postgres may split the scan across workers — you'll see `Parallel Seq Scan` under a `Gather Merge` instead, with `Rows Removed by Filter` counted per worker. It's the same story: still a full-table scan, just shared out. Parallelism speeds a bad plan up a little; it doesn't fix it.
+
+## Step 2 — form a hypothesis
+
+The `WHERE customer_id = 42` filter is extremely selective — 60 rows out of 300,000 — yet Postgres scanned all of them. That is the classic signature of a **missing index on the filter column**. With no index, a Seq Scan is the *only* way to find matching rows.
+
+But there's a second cost: the `Sort`. If the index also delivered rows already in `created_at DESC` order, Postgres could skip the sort entirely and walk straight to the ten it needs. One index can serve both the filter *and* the ordering — if we build it with the right column order:
+
+```sql
+CREATE INDEX ON orders (customer_id, created_at DESC);
+```
+
+Leading with `customer_id` lets the index jump straight to customer 42's rows; the trailing `created_at DESC` means those rows come out pre-sorted, newest first. Filter and `ORDER BY`, both satisfied by one structure.
+
+## Step 3 — apply the fix
+
+Before you build it, confirm nothing serves this query today. This is also your check — expect **0** matching indexes right now:
+
+<Run>
+SELECT count(*) FROM pg_indexes
+WHERE tablename = 'orders' AND indexdef ILIKE '%(customer_id%';
+</Run>
+
+Zero. Now add the multicolumn index:
+
+<Run>
+CREATE INDEX idx_orders_customer_recent ON orders (customer_id, created_at DESC);
+</Run>
+
+Postgres keeps table statistics per index, but a fresh index is picked up immediately for planning — no `ANALYZE` needed just for that. Re-measure the exact same query:
+
+<Run>
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT id, created_at, status, amount
+FROM orders
+WHERE customer_id = 42
+ORDER BY created_at DESC
+LIMIT 10;
+</Run>
+
+The plan flips completely:
+
+```text
+ Limit  (cost=0.42..2.14 rows=10 ...) (actual time=0.028..0.041 rows=10 ...)
+   Buffers: shared hit=13
+   ->  Index Scan using idx_orders_customer_recent on orders
+         (cost=0.42..10.73 rows=60 ...) (actual time=0.026..0.037 rows=10 ...)
+         Index Cond: (customer_id = 42)
+ Planning Time: 0.180 ms
+ Execution Time: 0.061 ms
+```
+
+Everything that was wrong is gone:
+
+- **`Index Scan`** replaces the Seq Scan — Postgres jumps straight to customer 42's rows via the index.
+- **No `Sort` node.** Because the index stores `created_at DESC`, the rows arrive already ordered; the `LIMIT` grabs the first ten and stops.
+- **`Buffers: shared hit`** dropped from ~1,900 pages to ~13, and **Execution Time** went from tens of milliseconds to a fraction of one. Same query, ~1000x less work.
+
+That is the entire investigation: a complaint, a measurement, a hypothesis, a fix, and a second measurement that proves it.
+
+<Check id="orders-customer-index-added">
+Create the multicolumn index on `orders (customer_id, created_at DESC)`. We'll confirm exactly one index on `orders` leads with `customer_id` — the one that made the plan flip.
+</Check>
+
+## Step 4 — a field checklist
+
+Not every slow query is a missing index, but the *method* is always the same. When something is slow in the wild:
+
+1. **Measure, don't guess.** Run `EXPLAIN (ANALYZE, BUFFERS)`. Read it bottom-up. The plan and the real timings are the ground truth.
+2. **Look for `Seq Scan` on a big table** feeding a selective filter, and check **`Rows Removed by Filter`** — a huge number there means you read far more than you returned.
+3. **Check selectivity and stats.** A very selective filter that still scans everything wants an index. If the planner's estimated `rows` is wildly off from the actual, your statistics are stale — run `ANALYZE` and re-check.
+4. **Watch for expensive `Sort` nodes.** An index in the right order can eliminate the sort, not just the scan.
+5. **Mind sargability.** A predicate like `WHERE lower(email) = 'x'` or `WHERE created_at::date = '...'` wraps the column in a function, so a plain index on the column can't be used. Rewrite to leave the column bare, or build a matching expression index.
+6. **Verify the index is actually used.** Adding an index proves nothing until `EXPLAIN` shows an `Index Scan` (or Bitmap Index Scan) and the time drops. If the planner ignores it, ask why — bad stats, low selectivity, or a non-sargable predicate.
+
+## What you learned
+
+- Diagnose slow queries by *measuring*: `EXPLAIN (ANALYZE, BUFFERS)` runs the query and shows the real plan, timings, buffers, and estimate-versus-actual — read it bottom-up.
+- A `Seq Scan` on a large table plus a large `Rows Removed by Filter` is the fingerprint of a missing index on a selective filter column.
+- A multicolumn index `(filter_col, sort_col DESC)` can serve both the `WHERE` and the `ORDER BY` at once — the leading column locates the rows, the trailing column delivers them pre-sorted so the `Sort` node disappears.
+- Column *order* in a multicolumn index matters: lead with the equality-filter column, then the ordering column.
+- Always confirm the fix by re-running `EXPLAIN ANALYZE` and watching the plan flip to an `Index Scan` and the time fall — an unverified index is just a guess.
+- Non-sargable predicates (a function wrapped around the column) block plain indexes; keep the column bare or use an expression index.
+
+That's the roadmap — from `SELECT` to serialization, from a single row to a query plan you can reason about. You can model data, change it safely, join it, tune it, and now troubleshoot it when it drags. Go build something.
