@@ -1,0 +1,3 @@
+title: Concurrency
+difficulty: advanced
+summary: How Postgres keeps concurrent transactions correct — MVCC, isolation levels, locking, and deadlocks.

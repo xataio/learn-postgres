@@ -1,0 +1,23 @@
+title: MVCC and isolation
+summary: How Postgres runs concurrent transactions correctly — row versions (xmin/xmax), snapshots, the read phenomena, and the four isolation levels.
+estimatedMinutes: 15
+tags:
+  - mvcc
+  - isolation-levels
+  - transactions
+  - snapshots
+  - serializable
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: transfer-committed
+    type: query-returns
+    description: Run the REPEATABLE READ transfer so balances land on ada 160, grace 50, linus 100.
+    sql: SELECT owner, balance FROM accounts ORDER BY owner
+    expect:
+      rowCount: 3
+      rows:
+        - [ada, 160]
+        - [grace, 50]
+        - [linus, 100]
