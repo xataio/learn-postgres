@@ -1,0 +1,172 @@
+A *view* is a stored query that behaves like a table. You name a `SELECT` once, then read from that name anywhere — the query runs fresh each time, so a view always reflects the current base tables. A *materialized* view instead caches the result on disk, trading freshness for speed.
+
+The seed is a small storefront: five `customers` (one marked inactive) and their `orders`.
+
+<Run>
+SELECT * FROM customers ORDER BY id;
+</Run>
+
+## A view names a query
+
+Say you keep filtering to active customers. Instead of repeating the `WHERE` clause everywhere, wrap the query in a view once:
+
+<Run>
+CREATE VIEW active_customers AS
+SELECT id, name, email, country
+FROM customers
+WHERE is_active;
+</Run>
+
+Now query the view exactly like a table — no data was copied; `active_customers` is a virtual table backed by the query above:
+
+<Run>
+SELECT name, country FROM active_customers ORDER BY name;
+</Run>
+
+Margaret is gone because she is inactive. A view gives you three things at once: **readability** (a name for a gnarly query), a **stable interface** (callers depend on the view, not the underlying columns), and a cheap way to **hide columns** — notice the view never exposes `is_active`, and you could just as easily omit an `email` or a `salary`.
+
+## Views are always fresh
+
+A view stores the query, not the rows, so it re-runs every time. Change a base table and the view reflects it instantly — no refresh step:
+
+<Run>
+UPDATE customers SET is_active = false WHERE name = 'Linus Torvalds';
+</Run>
+
+<Run>
+SELECT name, country FROM active_customers ORDER BY name;
+</Run>
+
+Linus vanished the moment his row changed. Let's put him back so later steps line up:
+
+<Run>
+UPDATE customers SET is_active = true WHERE name = 'Linus Torvalds';
+</Run>
+
+## Views join like tables
+
+Because a view is just a query with a name, you can join it, filter it, and aggregate over it like any table. Here we join `active_customers` to `orders`:
+
+<Run>
+SELECT c.name, count(o.id) AS orders
+FROM active_customers c
+JOIN orders o ON o.customer_id = c.id
+GROUP BY c.name
+ORDER BY c.name;
+</Run>
+
+## Updatable views and WITH CHECK OPTION
+
+A view over a *single* table with no aggregation, `DISTINCT`, or `GROUP BY` is **updatable** — `INSERT`, `UPDATE`, and `DELETE` on the view flow through to the base table. Watch an update to `active_customers` land on `customers`:
+
+<Run>
+UPDATE active_customers SET country = 'GB' WHERE name = 'Ada Lovelace';
+</Run>
+
+<Run>
+SELECT name, country FROM customers WHERE name = 'Ada Lovelace';
+</Run>
+
+But an updatable view has a sharp edge. Nothing stops you from writing a row that no longer satisfies the view's own `WHERE` — the row lands in the base table and then disappears from the view. `WITH CHECK OPTION` closes that gap: it rejects any write whose result would fall outside the view. Recreate the view with the guard, this time exposing `is_active` so we can write to it, using `CREATE OR REPLACE VIEW` (edits a view in place, no `DROP` needed):
+
+<Run>
+CREATE OR REPLACE VIEW active_customers AS
+SELECT id, name, email, country, is_active
+FROM customers
+WHERE is_active
+WITH CHECK OPTION;
+</Run>
+
+Now try to deactivate someone *through* the view — the new row would have `is_active = false`, which contradicts the view's filter, so Postgres refuses:
+
+<Run>
+UPDATE active_customers SET is_active = false WHERE name = 'Ada Lovelace';
+</Run>
+
+You'll see *new row violates check option*. The guard keeps the view's contract honest.
+
+## Materialized views cache the result
+
+A plain view re-runs its query on every read. For an expensive aggregation over millions of rows, that cost repeats every single time. A *materialized* view runs the query **once**, stores the resulting rows on disk, and serves them straight from storage — reads become as cheap as scanning a small table:
+
+<Run>
+CREATE MATERIALIZED VIEW country_revenue AS
+SELECT c.country, count(o.id) AS orders, sum(o.amount) AS revenue
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+GROUP BY c.country;
+</Run>
+
+<Run>
+SELECT * FROM country_revenue ORDER BY revenue DESC;
+</Run>
+
+The catch: the stored rows are a snapshot. Add an order and the materialized view *does not* change — it is now stale:
+
+<Run>
+INSERT INTO orders (customer_id, placed_on, amount) VALUES (1, '2026-04-01', 1000.00);
+</Run>
+
+<Run>
+SELECT * FROM country_revenue ORDER BY revenue DESC;
+</Run>
+
+UK revenue still shows the old total. You re-run the underlying query on demand with `REFRESH MATERIALIZED VIEW`:
+
+<Run>
+REFRESH MATERIALIZED VIEW country_revenue;
+</Run>
+
+<Run>
+SELECT * FROM country_revenue ORDER BY revenue DESC;
+</Run>
+
+Now UK reflects the new order. A plain `REFRESH` takes an exclusive lock, blocking readers while it rebuilds. `REFRESH MATERIALIZED VIEW CONCURRENTLY` avoids that lock so queries keep working during the rebuild — but it requires a `UNIQUE` index on the matview, and it does more work internally. Add the index, then refresh concurrently:
+
+<Run>
+CREATE UNIQUE INDEX country_revenue_country ON country_revenue (country);
+</Run>
+
+<Run>
+REFRESH MATERIALIZED VIEW CONCURRENTLY country_revenue;
+</Run>
+
+That index does double duty: besides enabling concurrent refresh, it makes lookups by `country` on the matview fast, exactly like an index on a real table.
+
+**When to use which:** reach for a plain view when the query is cheap and you need it always fresh. Reach for a materialized view when the query is expensive — big aggregations, heavy joins — and you can tolerate results that are a few minutes (or hours) old, refreshing on a schedule.
+
+## Your turn
+
+Build a per-customer summary as a plain view called `customer_totals`, with columns `name`, `order_count`, and `lifetime_value` (the count and sum of each customer's orders). A view fits here: it should always reflect the latest orders. Try it before peeking — here's one way:
+
+<Run>
+CREATE VIEW customer_totals AS
+SELECT c.name,
+       count(o.id) AS order_count,
+       sum(o.amount) AS lifetime_value
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+GROUP BY c.name;
+</Run>
+
+Read it back like a table:
+
+<Run>
+SELECT name, order_count, lifetime_value
+FROM customer_totals
+ORDER BY lifetime_value DESC;
+</Run>
+
+<Check id="customer-totals-view">
+Create the `customer_totals` view with the query above. We'll read Ada's row from it and confirm her four orders — including the 1000.00 one you inserted earlier — total 1200.00, proving the view is live.
+</Check>
+
+## What you learned
+
+- A view is a stored query — a virtual table that runs fresh on every read, so it always mirrors its base tables. `CREATE VIEW name AS SELECT …`.
+- Views give you readability, a stable interface, and column hiding; you query, join, and aggregate them exactly like tables.
+- A simple single-table view is updatable — writes pass through to the base table. `WITH CHECK OPTION` rejects writes that would push a row out of the view; `CREATE OR REPLACE VIEW` edits one in place.
+- A materialized view stores the *result* on disk for fast reads, but goes stale until `REFRESH MATERIALIZED VIEW`. `REFRESH … CONCURRENTLY` needs a `UNIQUE` index and avoids locking readers; index a matview for fast lookups too.
+- Choose a view for always-fresh and cheap; choose a materialized view for expensive aggregations you can afford to refresh periodically.
+
+Up next: functions — packaging logic in the database.
