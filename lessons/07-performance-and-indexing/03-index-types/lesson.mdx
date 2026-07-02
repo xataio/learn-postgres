@@ -1,9 +1,9 @@
 A B-tree is the right index for `=`, `<`, `>`, `BETWEEN`, and `ORDER BY` on a scalar column — which covers most queries. But B-trees index *one comparable value per row*, and some columns don't fit that shape: a jsonb blob, an array of tags, a full-text document, a huge append-only log. Postgres ships several other access methods, plus a few tricks that reshape any index. This lesson surveys them, each with a query it wins.
 
-The seed is a `docs` table of ~40,000 rows: a `tags` array, a `jsonb` `meta` column, a lopsided `status`, mixed-case `email`, and a `created_at` inserted in time order. Take a look:
+The seed is a `docs` table of **five million rows**: a `tags` array, a `jsonb` `meta` column, a lopsided `status`, mixed-case `email`, an `owner_id`, and a `created_at` inserted in time order. Big enough that each index's win shows up in the plan *and* in the timing. Take a look:
 
 <Run>
-SELECT id, status, email, tags, meta, created_at FROM docs ORDER BY id LIMIT 5;
+SELECT id, owner_id, status, email, tags, meta, created_at FROM docs ORDER BY id LIMIT 5;
 </Run>
 
 ## GIN: many values in one row
@@ -31,7 +31,7 @@ EXPLAIN ANALYZE SELECT id FROM docs WHERE meta @> '\{"kind":"report"\}';
 </Run>
 
 <Run>
-EXPLAIN ANALYZE SELECT id FROM docs WHERE meta ? 'priority';
+EXPLAIN ANALYZE SELECT id FROM docs WHERE meta ? 'pinned';
 </Run>
 
 The same idea backs full-text search: a `tsvector` is "many lexemes per row", and a GIN index on it accelerates the `@@` match operator. That's the standard way to make `to_tsvector(...) @@ to_tsquery(...)` fast.
@@ -81,14 +81,14 @@ On a shuffled column BRIN is useless — every block range spans the whole value
 
 ## Hash: equality only
 
-**Hash** indexes support exactly one operator: `=`. No ranges, no ordering. Since PostgreSQL 10 they're WAL-logged and crash-safe (before that they weren't even replicated), so they're finally usable — but a B-tree also handles `=` well *and* everything else, so hash rarely wins. Reach for it only for equality on a large, wide key where the slightly smaller hash index measurably helps.
+**Hash** indexes support exactly one operator: `=`. No ranges, no ordering. Since PostgreSQL 10 they're WAL-logged and crash-safe (before that they weren't even replicated), so they're finally usable — but a B-tree also handles `=` well *and* everything else, so hash rarely wins. Reach for it only for equality on a large, wide key where the slightly smaller hash index measurably helps — a wide text key like `email`, looked up by exact match, fits the shape better than a slim integer:
 
 <Run>
-CREATE INDEX docs_owner_hash ON docs USING hash (owner_id);
+CREATE INDEX docs_email_hash ON docs USING hash (email);
 </Run>
 
 <Run>
-EXPLAIN ANALYZE SELECT id FROM docs WHERE owner_id = 42;
+EXPLAIN ANALYZE SELECT id FROM docs WHERE email = 'User42@Example.com';
 </Run>
 
 Default to B-tree; treat hash as a rare, measured optimization.
