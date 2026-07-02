@@ -1,0 +1,128 @@
+The MVCC lesson showed that `UPDATE` and `DELETE` never overwrite a row — they leave the old version behind, marked expired. Those dead versions still occupy space on disk until something cleans them up. That something is `VACUUM`, and this lesson is about the dead tuples it collects, the *bloat* they cause, and the autovacuum process that keeps it all in check.
+
+The seed is one `events` table with 5,000 rows — a plain heap we can churn and measure.
+
+<Run>
+SELECT count(*), pg_size_pretty(pg_table_size('events')) AS size FROM events;
+</Run>
+
+## Dead tuples: the debris of MVCC
+
+Because Postgres keeps old row versions, every `UPDATE` writes a fresh version and leaves the previous one as a *dead tuple* — still on its page, invisible to new queries, taking up room. Update every row once and you've doubled the live rows with dead copies. Do it:
+
+<Run>
+UPDATE events SET payload = payload + 1;
+</Run>
+
+`pg_stat_user_tables` tracks this per table: `n_live_tup` is roughly the live rows, `n_dead_tup` the dead ones waiting to be reclaimed.
+
+<Run>
+SELECT n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = 'events';
+</Run>
+
+You'll see something like this — 5,000 live rows shadowed by 5,000 dead ones (exact counts vary, and autovacuum may have already trimmed them):
+
+```
+ n_live_tup | n_dead_tup
+------------+------------
+       5000 |       5000
+```
+
+That is *bloat*: the table now occupies far more pages than its live data needs. Every sequential scan reads the dead tuples too, and indexes still point at them, so unchecked bloat quietly makes reads slower and the table bigger.
+
+## `VACUUM` reclaims space for reuse
+
+`VACUUM` scans the table, finds dead tuples no transaction can still see, and marks their space free — available for future inserts and updates *into the same table*. Run it and watch the dead count drop to zero:
+
+<Run>
+VACUUM events;
+</Run>
+
+<Run>
+SELECT n_live_tup, n_dead_tup FROM pg_stat_user_tables WHERE relname = 'events';
+</Run>
+
+Notice the table size on disk hasn't shrunk, though — check it against the size from the top of the lesson:
+
+<Run>
+SELECT pg_size_pretty(pg_table_size('events')) AS size;
+</Run>
+
+This is the key subtlety: plain `VACUUM` frees space *inside* the file for reuse, but it does not hand pages back to the operating system. That's fine — a busy table refills the freed space with its next writes, so you reach a steady state instead of growing forever.
+
+`VACUUM ANALYZE` does the same reclaim **and** refreshes the planner's statistics (row counts, value distributions) in one pass. After a big change it's the usual choice, because the planner needs fresh stats to pick good plans:
+
+<Run>
+VACUUM (ANALYZE) events;
+</Run>
+
+## `VACUUM FULL` shrinks — at a price
+
+To actually give disk back, `VACUUM FULL` rewrites the entire table into a new, compact file and drops the old one. The catch is severe: it takes an `ACCESS EXCLUSIVE` lock for the whole rewrite, so nobody can read *or* write the table until it finishes.
+
+```sql
+VACUUM FULL events;   -- rewrites the table, ACCESS EXCLUSIVE lock, reads AND writes blocked
+```
+
+On our tiny table that's instant, but on a live multi-gigabyte table it can lock things for minutes or hours. Reserve `VACUUM FULL` for a maintenance window after a one-off mass delete; for everyday churn, plain `VACUUM` plus a healthy steady state is the right tool.
+
+## Autovacuum does this for you
+
+You rarely run `VACUUM` by hand, because **autovacuum** — a background process — does it automatically. It wakes periodically and vacuums (and analyzes) any table whose dead-tuple count has crossed a threshold, roughly `autovacuum_vacuum_threshold + autovacuum_vacuum_scale_factor * live_rows` (defaults: 50 rows plus 20% of the table). You can see its bookkeeping:
+
+<Run>
+SELECT last_autovacuum, last_autoanalyze, autovacuum_count
+FROM pg_stat_user_tables WHERE relname = 'events';
+</Run>
+
+The standing advice is: **leave autovacuum on and tune it, don't disable it.** Turning it off doesn't make bloat go away — it just lets it pile up until you're forced into a painful `VACUUM FULL`. On a hot table you typically make autovacuum *more* aggressive (lower the scale factor), not less.
+
+One thing autovacuum cannot beat: a **long-running transaction**. VACUUM can only remove a dead tuple once no transaction could still need it. An old open transaction holds back the *xmin horizon* — the oldest snapshot still in play — and every dead version newer than that horizon is pinned, uncleanable, no matter how hard autovacuum works. A forgotten `BEGIN;` in a `psql` window or an idle-in-transaction connection is a classic cause of runaway bloat. Keep transactions short.
+
+## FILLFACTOR: leave room for HOT updates
+
+There's a way to make updates create *less* garbage in the first place. Normally Postgres packs pages 100% full. `FILLFACTOR` tells it to leave some free space on each page — say 10% — so that when you update a row, the new version can often fit on the *same* page as the old one.
+
+That triggers a **HOT update** (Heap-Only Tuple): the new version lives on the same page and the indexes keep pointing at the original slot, so Postgres skips writing new index entries entirely. Less index churn, and the dead tuple is easier to reclaim. The cost is a little wasted space per page up front — a deliberate trade for update-heavy tables.
+
+You set it at creation or with `ALTER TABLE` (the latter applies to future writes; rewrite the table to apply it to existing pages):
+
+```sql
+CREATE TABLE t (...) WITH (fillfactor = 90);
+ALTER TABLE t SET (fillfactor = 90);
+```
+
+## Your turn
+
+Our `events` table is update-heavy but was created at the default 100% fillfactor. Rebuild it with `fillfactor = 90` so future updates have room to stay on-page as HOT updates. Set the option and rewrite the existing pages in one shot — `VACUUM FULL` after `ALTER TABLE` applies the new fillfactor to what's already there:
+
+<Run>
+ALTER TABLE events SET (fillfactor = 90);
+</Run>
+
+<Run>
+VACUUM FULL events;
+</Run>
+
+Confirm the setting landed. Table options live in `pg_class.reloptions`, a `text[]` of `key=value` strings:
+
+<Run>
+SELECT array_to_string(reloptions, ',') AS options
+FROM pg_class WHERE relname = 'events';
+</Run>
+
+You should see `fillfactor=90`. From here on, updates that fit will reuse free space on the page instead of bloating a fresh one.
+
+<Check id="fillfactor-set">
+Run the `ALTER TABLE events SET (fillfactor = 90)` above. We'll confirm the table's `reloptions` is exactly `fillfactor=90`.
+</Check>
+
+## What you learned
+
+- MVCC never overwrites: every `UPDATE`/`DELETE` leaves a *dead tuple* that keeps occupying page space until cleaned — that accumulation is *bloat*, and it slows scans and grows tables.
+- `pg_stat_user_tables` exposes `n_live_tup` and `n_dead_tup` so you can watch dead tuples build up and get reclaimed.
+- `VACUUM` frees dead space for *reuse* inside the file (no shrink); `VACUUM ANALYZE` also refreshes planner stats; `VACUUM FULL` rewrites the table to shrink it but takes an `ACCESS EXCLUSIVE` lock — avoid on live tables.
+- **Autovacuum** does this automatically on thresholds; leave it on and tune it. A long-running transaction holds back the *xmin horizon* and blocks cleanup — keep transactions short.
+- `FILLFACTOR` leaves free space per page so updates can be *HOT* (same-page, no index churn), reducing bloat on update-heavy tables.
+
+Up next: extensions — adding capabilities like citext and pg_trgm.
