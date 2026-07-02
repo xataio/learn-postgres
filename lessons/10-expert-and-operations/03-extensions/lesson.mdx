@@ -1,0 +1,123 @@
+Postgres ships a small core and lets everything else plug in as an *extension* — a packaged bundle of types, functions, operators, and even index support that you switch on with a single command. This lesson installs one (`citext`), watches it change how equality works, and then tours the extensions worth knowing about.
+
+The seed is a four-row `users` table whose emails were typed with inconsistent capitalization — the kind of mess an extension is about to clean up.
+
+<Run>
+SELECT * FROM users ORDER BY id;
+</Run>
+
+## What's on the shelf
+
+Every extension available to install shows up in the `pg_available_extensions` catalog. Have a look at what your server carries:
+
+<Run>
+SELECT name, default_version, left(comment, 40) AS comment
+FROM pg_available_extensions
+ORDER BY name
+LIMIT 12;
+</Run>
+
+That's the catalog of what you *could* install. A separate catalog, `pg_extension`, lists what's actually installed in this database right now — and on a fresh database it's just `plpgsql`, the one that powers `CREATE FUNCTION`:
+
+<Run>
+SELECT extname, extversion FROM pg_extension ORDER BY extname;
+</Run>
+
+## The email problem
+
+Plain `text` compares byte-for-byte, so capitalization matters. Ada's email is stored as `Ada@Example.com`, and a lookup with the lowercase form finds nothing:
+
+<Run>
+SELECT * FROM users WHERE email = 'ada@example.com';
+</Run>
+
+Zero rows. You could paper over it with `lower(email) = lower('ada@example.com')` on every query, but that's easy to forget and it can't back a `UNIQUE` constraint. A dedicated type is cleaner.
+
+## Install an extension
+
+`CREATE EXTENSION` loads a bundle into the current database. The `citext` extension adds a case-insensitive text type. Install it:
+
+<Run>
+CREATE EXTENSION IF NOT EXISTS citext;
+</Run>
+
+`IF NOT EXISTS` makes the command safe to run twice — a second call is a no-op instead of an error, which matters in migrations. Note extensions are installed *per database*: this `citext` lives in `lab` only, not server-wide.
+
+**Trusted vs untrusted.** You just installed `citext` without being a superuser. That works because `citext` is *trusted* — Postgres marks a curated set of safe extensions (`citext`, `pg_trgm`, `unaccent`, `hstore`, `fuzzystrmatch`, …) as installable by any role with `CREATE` on the database. *Untrusted* extensions reach outside the database — think PostGIS or anything loading C code or touching the filesystem — and still require a superuser. It's a security boundary: trusted extensions can't escalate privileges, untrusted ones might.
+
+Confirm it landed in `pg_extension`:
+
+<Run>
+SELECT extname, extversion FROM pg_extension WHERE extname = 'citext';
+</Run>
+
+## citext in action
+
+Now the same value cast to `citext` compares case-insensitively. This is the whole point of the type — run it and watch it return true:
+
+<Run>
+SELECT 'Ada@Example.com'::citext = 'ada@example.com'::citext AS same_email;
+</Run>
+
+The comparison ignores case, so the two spellings are equal. To make the `users` table behave that way permanently, change the column's type:
+
+<Run>
+ALTER TABLE users ALTER COLUMN email TYPE citext;
+</Run>
+
+The lookup that returned nothing a moment ago now finds Ada, no `lower()` gymnastics required:
+
+<Run>
+SELECT * FROM users WHERE email = 'ada@example.com';
+</Run>
+
+Because equality is case-insensitive, a `UNIQUE` index on a `citext` column also rejects `Bob@x.com` when `bob@x.com` already exists — the correct behavior for emails and usernames, and impossible to get from plain `text` without extra machinery.
+
+## Managing what you installed
+
+Three commands round out the lifecycle:
+
+```sql
+ALTER EXTENSION citext UPDATE;              -- move to the newest installed version
+ALTER EXTENSION citext UPDATE TO '1.6';     -- or a specific one
+DROP EXTENSION citext;                      -- remove it (fails if objects depend on it)
+```
+
+`ALTER EXTENSION … UPDATE` runs the packaged upgrade script after you install a new build of Postgres or the extension. `DROP EXTENSION` refuses if something still depends on it — you'd need `DROP EXTENSION citext CASCADE` to drop the dependents too, which is exactly as dangerous as it sounds.
+
+## The extensions worth knowing
+
+`citext` is a gentle introduction; the ecosystem is where Postgres earns its reputation. A few high-value, mostly trusted ones:
+
+- **`pg_trgm`** — trigram similarity. It powers fuzzy matching (`similarity('Postgres', 'Postgre') → 0.5`) and, crucially, a GIN index that makes `LIKE '%foo%'` and `ILIKE` searches fast. A leading-wildcard `LIKE` normally can't use a B-tree index at all; `pg_trgm` is the standard fix for substring search.
+- **`unaccent`** — strips accents (`unaccent('café') → 'cafe'`), so a search for "cafe" also matches "café". Often paired with `pg_trgm` or full-text search.
+- **`hstore`** — a key/value type inside a single column. It predates `jsonb` and is lighter when you only need flat string-to-string maps.
+- **`postgis`** — the big one: geospatial types, spatial indexes, and hundreds of functions for maps, distances, and geometry. It's *untrusted* (it links large C libraries), so installing it needs a superuser:
+
+```sql
+CREATE EXTENSION postgis;   -- requires superuser; adds geometry/geography types
+```
+
+The pattern is always the same: browse `pg_available_extensions`, `CREATE EXTENSION` the one you need, and a whole domain of types, functions, and operators appears — no recompiling Postgres.
+
+## Your turn
+
+You already ran it once above, but make sure `citext` is installed — the check below verifies it:
+
+<Run>
+CREATE EXTENSION IF NOT EXISTS citext;
+</Run>
+
+<Check id="citext-installed">
+Run `CREATE EXTENSION IF NOT EXISTS citext`. We'll confirm citext shows up exactly once in `pg_extension`.
+</Check>
+
+## What you learned
+
+- Extensions are packaged add-ons — types, functions, operators, index support — that ship with or plug into Postgres; `pg_available_extensions` lists what you can install, `pg_extension` lists what's installed in this database.
+- `CREATE EXTENSION [IF NOT EXISTS] name [SCHEMA …]` installs one per database; `ALTER EXTENSION … UPDATE` upgrades it and `DROP EXTENSION` removes it.
+- *Trusted* extensions (`citext`, `pg_trgm`, `unaccent`, `hstore`, …) install for any role with `CREATE` on the database; *untrusted* ones like PostGIS need a superuser because they reach outside it.
+- `citext` gives case-insensitive equality and uniqueness — perfect for emails and usernames — with no `lower()` scattered through your queries.
+- The ecosystem is the real payoff: `pg_trgm` for fuzzy/substring search, `unaccent` for accent-folding, `hstore` for key/value, PostGIS for geospatial.
+
+Up next: the capstone — diagnosing and fixing a slow real-world query.

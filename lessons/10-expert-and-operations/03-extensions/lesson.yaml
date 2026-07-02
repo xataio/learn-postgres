@@ -1,0 +1,21 @@
+title: Extensions
+summary: Add packaged types, functions, and index support to Postgres with CREATE EXTENSION — including the trusted ones a non-superuser can install.
+estimatedMinutes: 14
+tags:
+  - extensions
+  - create-extension
+  - citext
+  - pg-trgm
+  - postgis
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: citext-installed
+    type: query-returns
+    description: Install the citext extension with CREATE EXTENSION IF NOT EXISTS citext.
+    sql: SELECT count(*) FROM pg_extension WHERE extname = 'citext'
+    expect:
+      rowCount: 1
+      rows:
+        - [1]
