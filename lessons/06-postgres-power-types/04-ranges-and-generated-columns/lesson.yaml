@@ -1,0 +1,25 @@
+title: Ranges and generated columns
+summary: Model spans of time or numbers as first-class values and prevent overlaps with an exclusion constraint, then let Postgres compute columns for you with GENERATED ALWAYS AS STORED.
+estimatedMinutes: 14
+tags:
+  - ranges
+  - int4range
+  - tstzrange
+  - exclusion-constraint
+  - generated-columns
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: order-total-generated
+    type: schema-state
+    description: The order_lines table has a generated total column of type numeric.
+    table: order_lines
+    column: total
+    columnType: numeric
+  - id: fourth-booking-added
+    type: row-count
+    description: Add one more non-overlapping booking, giving four rows.
+    table: bookings
+    expect:
+      rowCount: 4

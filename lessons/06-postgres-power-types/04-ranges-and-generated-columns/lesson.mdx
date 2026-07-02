@@ -1,0 +1,147 @@
+A *range* is a single value that holds a span — "from 1 to 10", "this whole afternoon" — with real operators for containment, overlap, and adjacency. A *generated column* is a column Postgres computes for you from other columns and keeps forever in sync. Two modeling tools that let the database enforce what you'd otherwise check in application code.
+
+The seed has a `bookings` table (a `during` range that can't overlap) and an `order_lines` table (a `total` the database fills in). Look at the bookings first:
+
+<Run>
+SELECT id, guest, during FROM bookings ORDER BY id;
+</Run>
+
+## Ranges are one value with two bounds
+
+Every range has a lower and an upper bound, each independently inclusive or exclusive. The notation borrows from math: `[` and `]` include the bound, `(` and `)` exclude it. The built-in types are `int4range`, `int8range`, `numrange`, `tsrange`, `tstzrange`, and `daterange`.
+
+<Run>
+SELECT '[1,10)'::int4range AS half_open,
+       numrange(0, 5, '[]') AS inclusive_num,
+       daterange('2026-07-01', '2026-08-01') AS july;
+</Run>
+
+The default bound style is `[)` — lower included, upper excluded — which is usually what you want for spans: `[2026-07-01, 2026-08-01)` is "all of July" with no awkward overlap into August 1st.
+
+## Discrete ranges get canonicalized
+
+For types with a clear "next value" (integers, dates), Postgres rewrites every range into a single canonical form: lower inclusive, upper exclusive. So `[1,4]` and `[1,5)` are the *same* range and store identically:
+
+<Run>
+SELECT '[1,4]'::int4range AS written_inclusive,
+       '[1,4]'::int4range = '[1,5)'::int4range AS same_thing;
+</Run>
+
+Continuous types like `numrange` and `tstzrange` have no "next value", so they keep whatever bounds you gave them — `[1,4]` and `[1,5)` stay distinct there.
+
+## Operators: contains, overlap, adjacent
+
+This is why ranges beat two loose columns. `@>` asks "does this range contain that element or range?", `&&` asks "do these two overlap?", and `-|-` asks "are they adjacent (touching but not overlapping)?".
+
+<Run>
+SELECT int4range(1, 10) @> 5            AS contains_five,
+       int4range(1, 10) @> int4range(2, 4) AS contains_range,
+       int4range(1, 5) && int4range(4, 9)  AS overlaps,
+       int4range(1, 5) -|- int4range(5, 9) AS adjacent;
+</Run>
+
+There's also `<@` (contained by, the mirror of `@>`) and `*` for the intersection — the overlapping slice of two ranges:
+
+<Run>
+SELECT int4range(2, 4) \<@ int4range(1, 10) AS contained_by,
+       int4range(1, 6) * int4range(4, 9)    AS intersection;
+</Run>
+
+And accessor functions to pull a range apart: `lower()` and `upper()` return the bounds, while `lower_inf()` / `upper_inf()` tell you whether a side is unbounded (infinite):
+
+<Run>
+SELECT lower(during) AS starts,
+       upper(during) AS ends,
+       upper_inf(during) AS open_ended
+FROM bookings
+ORDER BY id;
+</Run>
+
+## The killer feature: no overlapping bookings
+
+An ordinary `UNIQUE` constraint can only say "these two values are equal". An **exclusion constraint** generalizes that to any operator — including `&&`. The seed declared `EXCLUDE USING gist (during WITH &&)`, which reads: reject any new row whose `during` overlaps an existing one. Postgres enforces it with a GiST index, and the range GiST operator class is built in — no extension required.
+
+Watch it work. This booking slots into a free gap, so it succeeds:
+
+<Run>
+INSERT INTO bookings (guest, during)
+VALUES ('Nadia', tstzrange('2026-07-05 14:00+00', '2026-07-06 11:00+00'));
+</Run>
+
+That's the fourth row. Now try one that collides with Ada's stay (July 1–3):
+
+<Run>
+INSERT INTO bookings (guest, during)
+VALUES ('Omar', tstzrange('2026-07-02 09:00+00', '2026-07-02 17:00+00'));
+</Run>
+
+Postgres refuses with a *conflicting key value violates exclusion constraint* error — the double-booking never lands in the table. That guarantee lives in the database, so it holds no matter which service, script, or console does the insert.
+
+To also allow the same time in *different* rooms you'd add a scalar term, `EXCLUDE USING gist (room_id WITH =, during WITH &&)`. Mixing `=` with `&&` in one GiST index needs the `btree_gist` extension, though — that requires `CREATE EXTENSION`, which is out of scope for this sandbox.
+
+<Check id="fourth-booking-added">
+Insert Nadia's non-overlapping booking above (Omar's should be rejected). The `bookings` table should end up with four rows.
+</Check>
+
+## Multiranges, briefly
+
+Since PostgreSQL 14 each range type has a companion *multirange* (`int4multirange`, `tstzmultirange`, …) that holds several disjoint ranges as one value — handy for "all the free slots" style results, and what `-` (subtracting one range from another) returns when it leaves a hole:
+
+<Run>
+SELECT '\{[1,5), [8,12)\}'::int4multirange AS gaps;
+</Run>
+
+## Generated columns: let Postgres do the math
+
+Switch to `order_lines`. Its `total` column was never inserted — the seed only supplied `qty` and `unit_price`. Postgres computed the rest:
+
+<Run>
+SELECT product, qty, unit_price, total FROM order_lines ORDER BY id;
+</Run>
+
+The column was declared `total numeric(12,2) GENERATED ALWAYS AS (qty * unit_price) STORED`. It's derived from the same row's other columns, recomputed on every insert or update, and read-only — writing to it directly is an error:
+
+<Run>
+UPDATE order_lines SET total = 0 WHERE product = 'Cable';
+</Run>
+
+Change an input, though, and the generated value follows automatically:
+
+<Run>
+UPDATE order_lines SET qty = 3 WHERE product = 'Keyboard';
+</Run>
+
+<Run>
+SELECT product, qty, unit_price, total FROM order_lines WHERE product = 'Keyboard';
+</Run>
+
+`STORED` means the value is physically saved and re-derived on write. PostgreSQL supports only `STORED` — there is no `VIRTUAL` (compute-on-read) option yet, so a generated column costs disk like any other.
+
+<Check id="order-total-generated">
+The `order_lines` table's `total` is a generated `numeric` column. It stays equal to `qty * unit_price` no matter how you change the inputs.
+</Check>
+
+## Good uses beyond arithmetic
+
+Generated columns shine wherever a value must always match a formula. A normalized search key keeps case-insensitive lookups honest without repeating `lower(...)` everywhere:
+
+```sql
+CREATE TABLE users (
+  email      text NOT NULL,
+  email_norm text GENERATED ALWAYS AS (lower(email)) STORED
+);
+CREATE UNIQUE INDEX ON users (email_norm);
+```
+
+Because the column is real, indexes and constraints can reference it — that `UNIQUE` index makes `Ada@x.com` and `ada@x.com` collide. You can even combine both halves of this lesson: generate a `tstzrange` from two separate timestamp columns and put an exclusion constraint on the result.
+
+## What you learned
+
+- A range packs a lower and upper bound into one value; `[` `]` include a bound and `(` `)` exclude it, with `[)` the default.
+- Discrete ranges (int, date) are canonicalized to `[lower, upper)`, so `[1,4]` and `[1,5)` are literally the same `int4range`.
+- Operators do the work: `@>` contains, `<@` contained-by, `&&` overlap, `-|-` adjacent, `*` intersection, plus `lower()`/`upper()`/`lower_inf()`/`upper_inf()`.
+- `EXCLUDE USING gist (during WITH &&)` blocks overlapping rows using a built-in range GiST opclass — no extension. Adding a scalar `WITH =` term would need `btree_gist`.
+- Multiranges (PostgreSQL 14+) hold several disjoint ranges as one value.
+- `GENERATED ALWAYS AS (expr) STORED` computes a read-only column from the same row, always in sync; Postgres offers `STORED` only, and indexes and constraints can reference it.
+
+Up next: UUIDs and domains.
