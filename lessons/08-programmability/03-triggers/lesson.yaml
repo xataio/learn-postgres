@@ -1,0 +1,22 @@
+title: Triggers
+summary: Run a function automatically on INSERT, UPDATE, or DELETE — for maintained columns and audit logs — with CREATE TRIGGER.
+estimatedMinutes: 15
+tags:
+  - triggers
+  - create-trigger
+  - plpgsql
+  - audit
+  - updated-at
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: audit-rows-written
+    type: query-returns
+    description: Attach the AFTER trigger, then make one UPDATE and one DELETE so the audit log records both.
+    sql: SELECT action, count(*) FROM document_audit GROUP BY action ORDER BY action
+    expect:
+      rowCount: 2
+      rows:
+        - [DELETE, 1]
+        - [UPDATE, 1]
