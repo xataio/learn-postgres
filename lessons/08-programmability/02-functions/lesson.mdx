@@ -1,0 +1,167 @@
+A *function* is a named piece of logic stored in the database: give it arguments, get a value back. Instead of repeating the same expression in every query — or shipping it to the application — you name it once and call it like any built-in.
+
+The seed is a tiny `products` catalog with a net (pre-tax) `price`. We'll write functions that turn those prices into something useful.
+
+<Run>
+SELECT * FROM products ORDER BY price;
+</Run>
+
+## The simplest function: `LANGUAGE sql`
+
+A SQL function is just a single query with a name. Here's one that adds 21% tax to a net amount. The argument is referenced by name, and `RETURNS` declares the output type:
+
+<Run>
+CREATE FUNCTION add_tax(amount numeric)
+RETURNS numeric
+LANGUAGE sql
+AS $$
+  SELECT amount * 1.21;
+$$;
+</Run>
+
+Now call it like any function — in the `SELECT` list, over every row:
+
+<Run>
+SELECT name, price, add_tax(price) AS gross
+FROM products
+ORDER BY price;
+</Run>
+
+A `LANGUAGE sql` function is the right default for anything expressible as one query. The body is a plain `SELECT`, so the planner can often *inline* it — splice the expression straight into the calling query and optimize the whole thing together, as if you'd never written a function. Zero call overhead.
+
+## Naming arguments, and `DEFAULT`
+
+Positional arguments get names in the signature; you can also give them defaults so callers may omit them. This version takes the tax `rate` as a second argument, defaulting to `0.21`:
+
+<Run>
+CREATE FUNCTION net_to_gross(amount numeric, rate numeric DEFAULT 0.21)
+RETURNS numeric
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT amount * (1 + rate);
+$$;
+</Run>
+
+Call it with one argument (the default 21% applies) or two (override the rate):
+
+<Run>
+SELECT net_to_gross(100.00)      AS default_rate,
+       net_to_gross(100.00, 0.10) AS reduced_rate;
+</Run>
+
+## `LANGUAGE plpgsql`: variables and control flow
+
+When one query isn't enough — you need variables, branching, or loops — reach for PL/pgSQL, Postgres's procedural language. The body lives in a `DECLARE`/`BEGIN`/`END` block. This function buckets a price into a size label using `IF`/`ELSIF`/`ELSE`:
+
+<Run>
+CREATE FUNCTION price_bucket(price numeric)
+RETURNS text
+LANGUAGE plpgsql
+IMMUTABLE
+AS $$
+DECLARE
+  label text;
+BEGIN
+  IF price \< 20 THEN
+    label := 'cheap';
+  ELSIF price \< 100 THEN
+    label := 'mid';
+  ELSE
+    label := 'premium';
+  END IF;
+  RETURN label;
+END;
+$$;
+</Run>
+
+Use it just like the SQL functions — the caller can't tell which language a function is written in:
+
+<Run>
+SELECT name, price, price_bucket(price) AS tier
+FROM products
+ORDER BY price;
+</Run>
+
+The trade-off: PL/pgSQL is *not* inlinable. Each call runs the procedural body, so it costs more per row than an equivalent SQL function. Prefer `LANGUAGE sql` for simple expressions; reach for PL/pgSQL only when you genuinely need the control flow.
+
+## Returning a set of rows: `RETURNS TABLE`
+
+Functions can return more than a scalar. `RETURNS TABLE(...)` declares named, typed output columns, and the function yields rows — so you can call it in `FROM` like a table:
+
+<Run>
+CREATE FUNCTION products_over(min_price numeric)
+RETURNS TABLE(name text, gross numeric)
+LANGUAGE sql
+STABLE
+AS $$
+  SELECT p.name, net_to_gross(p.price)
+  FROM products p
+  WHERE p.price >= min_price;
+$$;
+</Run>
+
+Because it returns rows, it belongs in the `FROM` clause, not the `SELECT` list:
+
+<Run>
+SELECT * FROM products_over(50) ORDER BY gross DESC;
+</Run>
+
+`RETURNS SETOF sometype` is the shorthand when the rows match an existing table or type (e.g. `RETURNS SETOF products`); `RETURNS TABLE(...)` is best when you're shaping a custom result.
+
+## Volatility: `IMMUTABLE`, `STABLE`, `VOLATILE`
+
+You may have noticed `IMMUTABLE` and `STABLE` above. Every function has a *volatility* category telling the planner how much it can trust the result:
+
+- **`IMMUTABLE`** — same arguments always give the same result, forever. No table reads, no clock, no randomness. `net_to_gross` is pure arithmetic, so it qualifies. The planner may fold it to a constant at plan time, and — crucially — you can build an **expression index** on it.
+- **`STABLE`** — result is fixed *within a single statement* but may change between statements (it reads tables, or depends on the current time within a query). `products_over` reads a table, so `STABLE` is the honest label.
+- **`VOLATILE`** (the default if you say nothing) — may return a different value on every call: `random()`, `now()` semantics, anything with side effects. The planner re-evaluates it for every single row and won't optimize around it.
+
+The label is a *promise you make*, and Postgres takes you at your word. Mislabel a table-reading function `IMMUTABLE` and the planner may cache a stale value. When in doubt, pick the most restrictive category that's actually true.
+
+Because `net_to_gross` is `IMMUTABLE`, we can safely index its output — an expression index that makes `WHERE net_to_gross(price) > …` fast:
+
+<Run>
+CREATE INDEX products_gross_idx ON products (net_to_gross(price));
+</Run>
+
+The `IMMUTABLE` label matters here: an index stores the function's output, so it's only correct if that output never changes for the same input. Postgres does *not* police this — it trusts the label and will happily build an index over a `VOLATILE` or `STABLE` function too, but such an index quietly rots as the results drift. Getting volatility right is what keeps the index honest.
+
+## Functions run inside your transaction
+
+A function executes as part of the statement that called it, inside the *same* transaction — there is no `COMMIT` or `ROLLBACK` inside a function body. If the outer statement rolls back, everything the function did rolls back with it. (Transaction control belongs to *procedures*, `CALL`ed on their own — a couple of lessons ahead.)
+
+## Your turn
+
+Write `net_to_gross(amount numeric, rate numeric DEFAULT 0.21) RETURNS numeric` — the tax-inclusive price, `amount * (1 + rate)` — as a `LANGUAGE sql` function, marked `IMMUTABLE` because it's pure arithmetic. You already saw one way above; here it is again so you can create it cleanly:
+
+<Run>
+CREATE OR REPLACE FUNCTION net_to_gross(amount numeric, rate numeric DEFAULT 0.21)
+RETURNS numeric
+LANGUAGE sql
+IMMUTABLE
+AS $$
+  SELECT amount * (1 + rate);
+$$;
+</Run>
+
+Check it against a known input — `100.00` at the default 21% should give `121`:
+
+<Run>
+SELECT net_to_gross(100.00) AS gross;
+</Run>
+
+<Check id="net-to-gross-works">
+Create `net_to_gross` as above. We'll call `net_to_gross(100.00)` and confirm it returns the gross price.
+</Check>
+
+## What you learned
+
+- `CREATE FUNCTION name(args) RETURNS type` stores reusable logic; arguments are referenced by name and can have a `DEFAULT`.
+- `LANGUAGE sql` is a single query — often *inlinable*, so it's the cheap default for simple expressions.
+- `LANGUAGE plpgsql` is procedural: `DECLARE` variables, `IF`/`ELSIF`/`ELSE`, loops, and `RETURN`. More power, more per-call cost, no inlining.
+- Return shapes: a scalar for the `SELECT` list, or `RETURNS TABLE(...)` / `SETOF` to yield rows you can query in `FROM`.
+- Volatility (`IMMUTABLE`, `STABLE`, `VOLATILE`) is a promise to the planner — it drives constant-folding and gates expression indexes. Mark pure functions `IMMUTABLE`.
+- Functions run inside the calling transaction; there's no `COMMIT` in a function — that's a procedure's job.
+
+Up next: triggers — running logic automatically on data changes.

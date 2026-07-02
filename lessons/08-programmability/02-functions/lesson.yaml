@@ -1,0 +1,21 @@
+title: Functions
+summary: Store reusable logic in the database with CREATE FUNCTION — SQL vs PL/pgSQL, return shapes, and volatility.
+estimatedMinutes: 15
+tags:
+  - functions
+  - create-function
+  - plpgsql
+  - volatility
+  - immutable
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: net-to-gross-works
+    type: query-returns
+    description: Write net_to_gross(amount, rate) and have it return the tax-inclusive price.
+    sql: SELECT net_to_gross(100.00)
+    expect:
+      rowCount: 1
+      rows:
+        - [121.0000]
