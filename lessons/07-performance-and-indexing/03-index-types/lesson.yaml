@@ -1,0 +1,14 @@
+title: Index types beyond B-tree
+summary: When GIN, GiST, BRIN, hash, partial, expression, and covering indexes each beat a plain B-tree — and what they cost.
+estimatedMinutes: 15
+tags:
+  - indexes
+  - gin
+  - gist
+  - brin
+  - partial-index
+  - covering-index
+authors:
+  - exekias
+seed: seed.sql
+checks: []

@@ -1,0 +1,165 @@
+A B-tree is the right index for `=`, `<`, `>`, `BETWEEN`, and `ORDER BY` on a scalar column — which covers most queries. But B-trees index *one comparable value per row*, and some columns don't fit that shape: a jsonb blob, an array of tags, a full-text document, a huge append-only log. Postgres ships several other access methods, plus a few tricks that reshape any index. This lesson surveys them, each with a query it wins.
+
+The seed is a `docs` table of ~40,000 rows: a `tags` array, a `jsonb` `meta` column, a lopsided `status`, mixed-case `email`, and a `created_at` inserted in time order. Take a look:
+
+<Run>
+SELECT id, status, email, tags, meta, created_at FROM docs ORDER BY id LIMIT 5;
+</Run>
+
+## GIN: many values in one row
+
+A B-tree can't answer "which docs have the tag `gin`" — the whole array is one opaque value to it. **GIN** (Generalized Inverted Index) solves the "many values per row" problem the way a book index does: it stores each *element* (each tag, each jsonb key, each lexeme) once and points back to the rows containing it.
+
+Index the `tags` array and ask for containment:
+
+<Run>
+CREATE INDEX docs_tags_gin ON docs USING gin (tags);
+</Run>
+
+<Run>
+EXPLAIN ANALYZE SELECT id FROM docs WHERE tags @> ARRAY['gin'];
+</Run>
+
+`@>` ("contains") is one of the array operators GIN accelerates, along with `\<@` ("is contained by") and `&&` ("overlaps"). GIN works the same on jsonb — index `meta` and query by containment or key existence:
+
+<Run>
+CREATE INDEX docs_meta_gin ON docs USING gin (meta);
+</Run>
+
+<Run>
+EXPLAIN ANALYZE SELECT id FROM docs WHERE meta @> '\{"kind":"report"\}';
+</Run>
+
+<Run>
+EXPLAIN ANALYZE SELECT id FROM docs WHERE meta ? 'priority';
+</Run>
+
+The same idea backs full-text search: a `tsvector` is "many lexemes per row", and a GIN index on it accelerates the `@@` match operator. That's the standard way to make `to_tsvector(...) @@ to_tsquery(...)` fast.
+
+The cost of the inverted index is real: GIN is **slower to update** (every element must be posted) and **larger and slower to build** than a B-tree. Great for read-heavy containment queries; think twice on write-hot columns.
+
+## GiST: ranges, geometry, and nearest-neighbor
+
+**GiST** (Generalized Search Tree) is a framework for indexing data where "does this overlap / contain / is near" matters more than "less-than". Its headline uses:
+
+- **Ranges.** Index an `int4range`, `tstzrange`, etc. and GiST accelerates the overlap operator `&&` — "which reservations collide with this window".
+- **Geometry / spatial.** Points, boxes, polygons; PostGIS is built on GiST.
+- **Nearest-neighbor (KNN).** GiST can return rows in distance order, so `ORDER BY location <-> point('(3,4)') LIMIT 5` becomes an index scan instead of sorting the whole table.
+- **Exclusion constraints.** `EXCLUDE USING gist (room WITH =, during WITH &&)` — "no two bookings for the same room with overlapping times" — is enforced by a GiST index.
+
+A range-overlap example (built inline so the seed stays lean):
+
+```sql
+CREATE TABLE bookings (
+  room   int,
+  during tstzrange
+);
+CREATE INDEX bookings_during_gist ON bookings USING gist (during);
+
+-- accelerated by the GiST index:
+SELECT * FROM bookings WHERE during && tstzrange(now(), now() + interval '1 hour');
+```
+
+Where GIN indexes *elements*, GiST indexes *bounding shapes* — that's why it, not GIN, is the one that does distance ordering and overlap.
+
+## BRIN: tiny indexes for huge, ordered tables
+
+**BRIN** (Block Range Index) doesn't store a pointer per row. It stores a summary — the min and max value — for each *block range* (a group of physical pages). To answer a range query it skips any block range whose min/max can't match. That makes it minuscule (kilobytes where a B-tree would be megabytes) but coarse.
+
+BRIN only pays off when the column is **naturally correlated with physical order**. Our `created_at` is: rows were inserted in time order, so consecutive rows sit on consecutive pages. That's the classic BRIN case — an append-only timestamp.
+
+<Run>
+CREATE INDEX docs_created_brin ON docs USING brin (created_at);
+</Run>
+
+<Run>
+EXPLAIN ANALYZE SELECT count(*) FROM docs
+WHERE created_at >= TIMESTAMPTZ '2024-06-01' AND created_at < TIMESTAMPTZ '2024-07-01';
+</Run>
+
+On a shuffled column BRIN is useless — every block range spans the whole value domain, so nothing gets skipped. On a well-correlated giant table it's a spectacular space-for-precision trade.
+
+## Hash: equality only
+
+**Hash** indexes support exactly one operator: `=`. No ranges, no ordering. Since PostgreSQL 10 they're WAL-logged and crash-safe (before that they weren't even replicated), so they're finally usable — but a B-tree also handles `=` well *and* everything else, so hash rarely wins. Reach for it only for equality on a large, wide key where the slightly smaller hash index measurably helps.
+
+<Run>
+CREATE INDEX docs_owner_hash ON docs USING hash (owner_id);
+</Run>
+
+<Run>
+EXPLAIN ANALYZE SELECT id FROM docs WHERE owner_id = 42;
+</Run>
+
+Default to B-tree; treat hash as a rare, measured optimization.
+
+## Partial indexes: index only the rows you query
+
+A **partial index** carries a `WHERE` clause and stores only the matching rows. When your queries always target a small slice — `status = 'active'`, or `deleted_at IS NULL` — there's no reason to index the rest.
+
+Our `status` is 90% `'archived'`. If you only ever query the live 10%, index just that:
+
+<Run>
+CREATE INDEX docs_active ON docs (created_at) WHERE status = 'active';
+</Run>
+
+<Run>
+EXPLAIN ANALYZE SELECT id FROM docs
+WHERE status = 'active' AND created_at >= TIMESTAMPTZ '2024-03-01'
+ORDER BY created_at;
+</Run>
+
+The planner uses the partial index only when it can prove the query's predicate implies the index's `WHERE`. The payoff: a fraction of the size, fewer levels to walk, and — because 90% of writes touch `archived` rows the index ignores — much cheaper to maintain.
+
+## Expression indexes: index a computed value
+
+An index stores column values as-is, so `WHERE lower(email) = '...'` can't use a plain index on `email` — the stored value and the searched value differ. An **expression (functional) index** indexes the *result of an expression* instead:
+
+<Run>
+CREATE INDEX docs_email_lower ON docs (lower(email));
+</Run>
+
+<Run>
+EXPLAIN ANALYZE SELECT id FROM docs WHERE lower(email) = 'user42@example.com';
+</Run>
+
+The query's expression must match the index's expression exactly for the planner to use it. This is also how you index case-insensitive lookups, `date_trunc('day', created_at)`, or any derived key. (For substring search like `LIKE '%foo%'` or fuzzy matching, the usual answer is a trigram GIN index via the `pg_trgm` **extension** — out of scope for this sandbox, but worth knowing the shape of.)
+
+## Covering indexes: skip the heap with INCLUDE
+
+Normally an index scan finds matching rows, then visits the table heap to fetch the other columns you `SELECT`. If the index carries *every* column the query needs, Postgres can skip the heap entirely — an **Index Only Scan**. `INCLUDE` adds non-key "payload" columns to a B-tree for exactly this:
+
+<Run>
+CREATE INDEX docs_owner_covering ON docs (owner_id) INCLUDE (price);
+</Run>
+
+<Run>
+EXPLAIN ANALYZE SELECT owner_id, price FROM docs WHERE owner_id = 42;
+</Run>
+
+Look for `Index Only Scan` in the plan. `INCLUDE` columns aren't part of the search key (you can't range-scan on them) — they're just along for the ride so the heap fetch disappears. The cost is a fatter index; include only the payload your hot queries actually read.
+
+## Which index should I use?
+
+A quick decision guide:
+
+- Scalar `=`, `<`, `>`, `BETWEEN`, `ORDER BY` → **B-tree** (the default; start here).
+- jsonb, arrays, or full-text `tsvector` containment/existence (`@>`, `?`, `&&`, `@@`) → **GIN**.
+- Ranges, geometry/spatial, nearest-neighbor ordering, or exclusion constraints → **GiST**.
+- Enormous table, column correlated with physical order (append-only timestamp) → **BRIN**.
+- Only ever query a small, fixed slice of the table → add a **partial** `WHERE`.
+- Query filters on a function of a column (`lower(email)`) → **expression** index.
+- A hot query reads a couple of extra columns → **covering** index with `INCLUDE`.
+- Pure equality on a big key, and you've measured a win → **hash** (rare).
+
+## What you learned
+
+- **GIN** is an inverted index for "many values per row" — jsonb, arrays, and `tsvector`. Fast containment reads (`@>`, `?`, `&&`, `@@`), but slower to update and larger to build.
+- **GiST** indexes bounding shapes: range overlap (`&&`), spatial data, KNN distance ordering (`<->`), and exclusion constraints.
+- **BRIN** stores per-block-range summaries — tiny and coarse; a huge win only when the column tracks physical row order.
+- **Hash** handles equality only and is now WAL-logged, but a B-tree usually does the same job and more.
+- **Partial** indexes (`... WHERE ...`) index only the rows you query — smaller, faster, cheaper to maintain.
+- **Expression** indexes (`... ON t (lower(email))`) let a query on a computed value use an index.
+- **Covering** indexes (`... INCLUDE (...)`) carry payload columns so a query becomes an Index Only Scan and never touches the heap.
+
+Up next: query optimization — statistics, ANALYZE, and common anti-patterns.
