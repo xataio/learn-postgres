@@ -20,6 +20,10 @@ CREATE INDEX docs_tags_gin ON docs USING gin (tags);
 EXPLAIN ANALYZE SELECT id FROM docs WHERE tags @> ARRAY['gin'];
 </Run>
 
+<Check id="tags-gin-created">
+Build the `docs_tags_gin` index above. We'll confirm a GIN index on `tags` exists on your branch — re-run the query and the plan should show a Bitmap Index Scan on it.
+</Check>
+
 `@>` ("contains") is one of the array operators GIN accelerates, along with `\<@` ("is contained by") and `&&` ("overlaps"). GIN works the same on jsonb — index `meta` and query by containment or key existence:
 
 <Run>

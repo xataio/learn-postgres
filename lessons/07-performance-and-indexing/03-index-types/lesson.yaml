@@ -11,4 +11,12 @@ tags:
 authors:
   - exekias
 seed: seed.sql
-checks: []
+checks:
+  - id: tags-gin-created
+    type: query-returns
+    description: Build the GIN index on the tags array.
+    sql: "SELECT count(*) FROM pg_indexes WHERE tablename = 'docs' AND indexdef ILIKE '%gin (tags%'"
+    expect:
+      rowCount: 1
+      rows:
+        - [1]
