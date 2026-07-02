@@ -1,0 +1,163 @@
+The last lesson used windows to stamp per-group aggregates and ranks onto every row. Those windows looked at the whole partition at once. This lesson is about windows that grow row by row — running totals, moving averages, and functions that peek at neighboring rows — plus the *frame* clause that quietly controls all of them.
+
+The seed is a tiny time series: a `daily_sales` table with one `amount` per `region` per `day`, two regions over three weeks. Ordering a window by `day` within each region is what makes cumulative math natural.
+
+<Run>
+SELECT * FROM daily_sales ORDER BY region, day;
+</Run>
+
+## Running totals: ORDER BY changes everything
+
+Add `ORDER BY` to an aggregate's `OVER` clause and the aggregate stops looking at the whole partition. It accumulates row by row, from the first row up to the current one. That turns `sum` into a running total:
+
+<Run>
+SELECT day, amount,
+       sum(amount) OVER (PARTITION BY region ORDER BY day) AS running_total,
+       sum(amount) OVER (PARTITION BY region)              AS region_total
+FROM daily_sales
+WHERE region = 'north'
+ORDER BY day;
+</Run>
+
+Two `sum`s over the same rows, wildly different results. `OVER (PARTITION BY region)` — no `ORDER BY` — gives every row the region's grand total (14640) because the window is the entire partition. `OVER (PARTITION BY region ORDER BY day)` gives a *running* total that climbs 530, 1090, 1680, … until the last row reaches that same 14640.
+
+That difference is the whole idea: with `ORDER BY`, the window is not "the partition" but "the partition so far." The same trick works for any aggregate.
+
+## Moving averages: a sliding window with ROWS
+
+A running total accumulates from the start. A *moving* average slides a fixed-width window along the rows. You size that window with a frame clause — here, "this row plus the six before it," a 7-day average:
+
+<Run>
+SELECT day, amount,
+       round(avg(amount) OVER (PARTITION BY region ORDER BY day
+                               ROWS BETWEEN 6 PRECEDING AND CURRENT ROW)) AS moving_avg_7
+FROM daily_sales
+WHERE region = 'north'
+ORDER BY day;
+</Run>
+
+`ROWS BETWEEN 6 PRECEDING AND CURRENT ROW` is the frame: the set of rows the aggregate actually sees for each row. The first few rows average fewer than seven values (there aren't six earlier rows yet), which is why the smoothing "warms up" over the first week. After that, each value is the mean of a rolling seven-day span, ironing out the weekend spikes.
+
+## LAG and LEAD: peek at the neighbors
+
+Sometimes you don't want an aggregate at all — you want *that other row's* value on this row. `lag()` reaches backward, `lead()` reaches forward, both along the window's `ORDER BY`. The classic use is a day-over-day delta:
+
+<Run>
+SELECT day, amount,
+       lag(amount) OVER (PARTITION BY region ORDER BY day)          AS prev_day,
+       amount - lag(amount) OVER (PARTITION BY region ORDER BY day) AS delta
+FROM daily_sales
+WHERE region = 'north'
+ORDER BY day;
+</Run>
+
+`lag(amount)` returns the previous row's amount; subtract it and you have the change since yesterday. The very first row has no previous row, so `lag` returns `NULL` and the delta is `NULL` too — arithmetic with `NULL` is `NULL`.
+
+`lag` takes two more optional arguments: an *offset* (how many rows back, default 1) and a *default* (what to return when there's no such row, instead of `NULL`). Compare yesterday with the same day last week using an offset of 7, and make the first-row delta a clean `0` with a default:
+
+<Run>
+SELECT day, amount,
+       amount - lag(amount, 7) OVER (PARTITION BY region ORDER BY day)    AS vs_last_week,
+       amount - lag(amount, 1, amount) OVER (PARTITION BY region ORDER BY day) AS delta_no_null
+FROM daily_sales
+WHERE region = 'north'
+ORDER BY day;
+</Run>
+
+`lag(amount, 7)` lines each day up against the same weekday seven rows earlier — a steady +50, the week-over-week growth baked into the seed. And `lag(amount, 1, amount)` uses the current row's own `amount` as the fallback, so the first row subtracts from itself and reports `0` instead of `NULL`. `lead()` works identically in the other direction — handy for "next row minus this one."
+
+## FIRST_VALUE, LAST_VALUE, and the frame that bites
+
+`first_value()` and `last_value()` pull a value from the ends of the frame; `nth_value(col, n)` grabs the nth. They sound symmetric. Run them and watch `last_value` misbehave:
+
+<Run>
+SELECT day, amount,
+       first_value(amount) OVER (PARTITION BY region ORDER BY day) AS first_amt,
+       last_value(amount)  OVER (PARTITION BY region ORDER BY day) AS last_amt
+FROM daily_sales
+WHERE region = 'north'
+ORDER BY day;
+</Run>
+
+`first_amt` is a constant 530 (the region's first day), exactly as expected. But `last_amt` just repeats `amount` on every row — it never reaches the region's final day (800). That is *the* window-frame gotcha, and it's not a bug.
+
+Here's why. Whenever you add `ORDER BY` to a window without spelling out a frame, Postgres supplies a default: `RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW`. The frame ends at the current row. So "the last value in the frame" is the current row, every time. `first_value` looks fine only because the frame always *starts* at the partition's first row.
+
+The fix is to make the frame cover the whole partition explicitly:
+
+<Run>
+SELECT day, amount,
+       last_value(amount) OVER (PARTITION BY region ORDER BY day
+                                ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING) AS last_amt
+FROM daily_sales
+WHERE region = 'north'
+ORDER BY day;
+</Run>
+
+Now `last_amt` is 800 on every row — the region's actual final day. Rule of thumb: if you use `last_value` or `nth_value` with `ORDER BY`, always state the frame yourself.
+
+## ROWS vs RANGE, and why duplicate keys surprise people
+
+The frame keyword — `ROWS` or `RANGE` — decides what "preceding" and "following" *count*. `ROWS` counts physical rows: `6 PRECEDING` means six rows back, full stop. `RANGE` counts by *value*: `CURRENT ROW` includes every row that ties with the current one on the `ORDER BY` key. When the ordering key is unique they're identical, so the difference hides until there are duplicate keys.
+
+Roll the daily rows up to a `week` number (many days share a week) and run both cumulative sums side by side:
+
+<Run>
+WITH weekly AS (
+  SELECT (day - DATE '2024-01-01') / 7 AS week, amount
+  FROM daily_sales
+  WHERE region = 'north'
+)
+SELECT week, amount,
+       sum(amount) OVER (ORDER BY week ROWS  BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS rows_total,
+       sum(amount) OVER (ORDER BY week RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) AS range_total
+FROM weekly
+ORDER BY week, amount;
+</Run>
+
+`rows_total` climbs one row at a time. `range_total` jumps in steps: every row in week 0 shows 4530 (that week's full total), then every row in week 1 shows 9410, and so on. Because those rows are *peers* under `RANGE` — same `week` value — they all share one frame end.
+
+This is exactly why the default frame (`RANGE … CURRENT ROW`) trips people up on `last_value` and on running totals with tied timestamps: peers move together. When you want strict row-by-row accumulation regardless of ties, say `ROWS`.
+
+## Your turn
+
+Find, for each region, the single day with the biggest jump from the day before — the largest positive `delta` you computed earlier — and save it as a table `biggest_jump` with columns `region`, `day` (as text), and `delta`. You'll need `lag()` to get each day's delta, then a ranking window to pick the top delta per region. Give it a shot before revealing one solution:
+
+<Run>
+CREATE TABLE biggest_jump AS
+WITH deltas AS (
+  SELECT region, day, amount,
+         amount - lag(amount) OVER (PARTITION BY region ORDER BY day) AS delta
+  FROM daily_sales
+),
+ranked AS (
+  SELECT region, day, delta,
+         row_number() OVER (PARTITION BY region ORDER BY delta DESC NULLS LAST, day) AS rn
+  FROM deltas
+)
+SELECT region, to_char(day, 'YYYY-MM-DD') AS day, delta
+FROM ranked
+WHERE rn = 1;
+</Run>
+
+See what landed:
+
+<Run>
+SELECT region, day, delta FROM biggest_jump ORDER BY region;
+</Run>
+
+Both regions spike hardest on the same Saturday, 2024-01-06, with a +230 jump — the weekend bump from the seed. Note the two windows working together: `lag()` builds the per-day delta, then `row_number()` over `delta DESC` ranks those deltas so `rn = 1` isolates the biggest. `NULLS LAST` keeps each region's first-day `NULL` delta from ever winning.
+
+<Check id="biggest-jump-saved">
+Create the `biggest_jump` table with the query above. We'll confirm it holds each region's single biggest day-over-day jump: both on 2024-01-06 with a delta of 230.
+</Check>
+
+## What you learned
+
+- Adding `ORDER BY` to an aggregate's `OVER` clause turns it into a running total — the window becomes "the partition so far," not the whole partition.
+- A moving average is just an aggregate over a sliding frame like `ROWS BETWEEN 6 PRECEDING AND CURRENT ROW`.
+- `lag()` and `lead()` read a neighboring row's value along the window order; the 3-arg form takes an offset and a default to replace the `NULL` at the edges.
+- `first_value` / `last_value` / `nth_value` read from the frame ends — and `last_value` looks broken under the default frame (`RANGE … CURRENT ROW`), so state the frame explicitly.
+- `ROWS` counts physical rows; `RANGE` counts by value, treating tied `ORDER BY` keys as one peer group — which is why duplicate keys and the default frame surprise people.
+
+Up next: recursive CTEs — walking hierarchies and graphs with `WITH RECURSIVE`.
