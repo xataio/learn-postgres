@@ -62,6 +62,10 @@ EXPLAIN ANALYZE SELECT * FROM events WHERE user_id = 42;
 
 There's the payoff. The Execution Time falls from a few hundred milliseconds to a *fraction of one* — orders of magnitude faster — because Postgres jumped straight to user 42's rows instead of reading twenty-five million. And the gap only *widens* as the table grows: the Seq Scan slows down with every row you add; the index barely notices.
 
+<Check id="user-id-index-created">
+Run the `CREATE INDEX` above so `events` has a B-tree index on `user_id`. We'll confirm the index exists on your branch.
+</Check>
+
 ## What a B-tree covers
 
 A B-tree isn't only for `=`. Because it stores values *in sorted order*, it accelerates anything that maps to a contiguous slice of that order:

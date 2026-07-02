@@ -10,4 +10,12 @@ tags:
 authors:
   - exekias
 seed: seed.sql
-checks: []
+checks:
+  - id: user-id-index-created
+    type: query-returns
+    description: Create the B-tree index on events(user_id).
+    sql: "SELECT count(*) FROM pg_indexes WHERE tablename = 'events' AND indexdef ILIKE '%(user_id)%'"
+    expect:
+      rowCount: 1
+      rows:
+        - [1]
