@@ -50,5 +50,12 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.4",
     "typescript": "^6"
+  },
+  "overrides": {
+    "@babel/core": "^7.29.6",
+    "postcss": "^8.5.10",
+    "tsx": {
+      "esbuild": "^0.28.1"
+    }
   }
 }
