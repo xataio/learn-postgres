@@ -1,0 +1,23 @@
+title: Deadlocks
+summary: Why two transactions can freeze each other, how Postgres detects and breaks the tie, and the ordering discipline that prevents it.
+estimatedMinutes: 14
+tags:
+  - deadlocks
+  - locking
+  - advisory-locks
+  - concurrency
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: consistent-order-transfer
+    type: query-returns
+    description: Run a transfer that locks both rows in id order, leaving ada=70 and sofia=130 (the total is unchanged).
+    sql: SELECT owner, balance FROM accounts ORDER BY id
+    expect:
+      rowCount: 4
+      rows:
+        - [ada, 70]
+        - [grace, 100]
+        - [linus, 100]
+        - [sofia, 130]
