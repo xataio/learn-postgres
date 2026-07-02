@@ -1,0 +1,212 @@
+A column doesn't have to hold a single scalar. Postgres lets any type become an *array* — `text[]`, `int[]`, `timestamptz[]` — so one row can carry a whole list. It's a natural fit for tags, and it comes with a rich set of operators for asking "does this list contain that?".
+
+The seed is a tiny blog: a handful of `articles`, each with a `tags` text array that overlaps with the others.
+
+<Run>
+SELECT id, title, tags FROM articles ORDER BY id;
+</Run>
+
+## Two ways to write an array literal
+
+You'll see arrays written two different ways, and they mean the same thing. The `ARRAY[...]` constructor takes a comma-separated list of expressions in square brackets. The other form is a single string in curly braces — Postgres parses it into an array based on the column's type:
+
+<Run>
+SELECT ARRAY['postgres', 'arrays'] AS built,
+       '\{postgres,arrays\}'::text[] AS from_string;
+</Run>
+
+Both produce the same `text[]`. The constructor is friendlier when values contain commas, spaces, or quotes; the curly form is compact and is what Postgres shows you on the way *out*. In the seed you can see both — most rows use `ARRAY[...]`, one uses `'{postgres,performance,explain}'`.
+
+## Indexing is 1-based (and forgiving)
+
+Here's the classic surprise: array indexing starts at **1**, not 0. `tags[1]` is the first element.
+
+<Run>
+SELECT title, tags[1] AS first_tag, tags[2] AS second_tag
+FROM articles
+ORDER BY id;
+</Run>
+
+And there's no such thing as "index out of bounds" — reaching past the end just returns `NULL` instead of raising an error. The "Hello, world" row has an empty array, so *every* index is NULL there:
+
+<Run>
+SELECT title, tags[1] AS first_tag, tags[99] AS way_past_end
+FROM articles
+ORDER BY id;
+</Run>
+
+You can also take a **slice** with a colon — `tags[2:3]` returns a new array of elements 2 through 3 (inclusive on both ends):
+
+<Run>
+SELECT title, tags[1:2] AS first_two
+FROM articles
+ORDER BY id;
+</Run>
+
+## How long is it?
+
+Two functions report size, and the difference matters for empty arrays. `array_length(arr, 1)` gives the length along the first dimension — but for an empty array it returns `NULL`, not 0. `cardinality(arr)` counts total elements and returns `0` for an empty array, which is usually what you want:
+
+<Run>
+SELECT title,
+       array_length(tags, 1) AS len,
+       cardinality(tags) AS card
+FROM articles
+ORDER BY id;
+</Run>
+
+The `1` in `array_length` is the dimension — arrays can be multi-dimensional, though single-dimension is by far the common case.
+
+## `unnest`: from array to rows
+
+An array packs many values into one row. `unnest()` does the reverse: it expands an array into a set of rows, one per element. Put it in `SELECT` to explode a single array:
+
+<Run>
+SELECT unnest(ARRAY['a', 'b', 'c']) AS letter;
+</Run>
+
+The real power is `unnest` in the `FROM` clause, laterally joined to each row — that turns "articles with a tags array" into a flat "one row per (article, tag)" shape you can then group and count. This is how you build a tag cloud:
+
+<Run>
+SELECT tag, count(*) AS uses
+FROM articles, unnest(tags) AS tag
+GROUP BY tag
+ORDER BY uses DESC, tag;
+</Run>
+
+## `array_agg`: from rows back to an array
+
+`array_agg()` is the mirror image — an aggregate that collects many rows into one array. Combine it with `GROUP BY` to fold values up. Here we invert the tag cloud: for each tag, which articles use it?
+
+<Run>
+SELECT tag, array_agg(title ORDER BY title) AS articles
+FROM articles, unnest(tags) AS tag
+GROUP BY tag
+ORDER BY tag;
+</Run>
+
+`array_agg` even takes its own `ORDER BY` so the collected array is sorted, independent of the query's ordering.
+
+## Membership: `ANY` and `ALL`
+
+To ask "is this value in the array?", compare it against `ANY(arr)`. `x = ANY(tags)` is true when `x` equals *any* element — the array equivalent of `IN`:
+
+<Run>
+SELECT title, tags
+FROM articles
+WHERE 'performance' = ANY(tags)
+ORDER BY id;
+</Run>
+
+`ALL` is the counterpart: the comparison must hold for *every* element. It's handy with `<>` to mean "this value appears nowhere". Here, articles that are not tagged `postgres`:
+
+<Run>
+SELECT title, tags
+FROM articles
+WHERE 'postgres' \<> ALL(tags)
+ORDER BY id;
+</Run>
+
+## Set-style operators: contains, contained by, overlaps
+
+For array-against-array questions, three operators do the heavy lifting:
+
+- `@>` — **contains**: the left array holds every element of the right.
+- `\<@` — **contained by**: the reverse of `@>`.
+- `&&` — **overlaps**: the two arrays share at least one element.
+
+"Articles tagged with *both* postgres and performance" is a containment question:
+
+<Run>
+SELECT title, tags
+FROM articles
+WHERE tags @> ARRAY['postgres', 'performance']
+ORDER BY id;
+</Run>
+
+"Articles that share *any* tag with this reading list" is an overlap:
+
+<Run>
+SELECT title, tags
+FROM articles
+WHERE tags && ARRAY['json', 'css']
+ORDER BY id;
+</Run>
+
+And `\<@` flips containment — "articles whose tags are all drawn from this allowed set":
+
+<Run>
+SELECT title, tags
+FROM articles
+WHERE tags \<@ ARRAY['postgres', 'performance', 'indexes', 'replication', 'explain', 'json', 'beginner']
+ORDER BY id;
+</Run>
+
+## Mutating arrays
+
+Arrays are values, so "changing" one means producing a new array and assigning it back. A family of functions builds those new arrays:
+
+- `array_append(arr, x)` — add `x` to the end (`arr || x` is shorthand).
+- `array_prepend(x, arr)` — add `x` to the front.
+- `array_remove(arr, x)` — drop *every* occurrence of `x`.
+- `array_cat(a, b)` — concatenate two arrays (`a || b` also works).
+- `array_position(arr, x)` — the 1-based index of the first `x`, or `NULL` if absent.
+
+<Run>
+SELECT array_append(ARRAY['a', 'b'], 'c')   AS appended,
+       array_prepend('z', ARRAY['a', 'b'])  AS prepended,
+       array_remove(ARRAY['a', 'b', 'a'], 'a') AS removed,
+       ARRAY['a', 'b'] || ARRAY['c', 'd']   AS concatenated,
+       array_position(ARRAY['a', 'b', 'c'], 'b') AS pos_of_b;
+</Run>
+
+In an `UPDATE`, you assign the rebuilt array back to the column:
+
+<Run>
+UPDATE articles
+SET tags = array_append(tags, 'featured')
+WHERE title = 'Indexing 101';
+</Run>
+
+<Run>
+SELECT title, tags FROM articles WHERE title = 'Indexing 101';
+</Run>
+
+## Converting to and from text
+
+Sometimes an array arrives as a delimited string (a CSV cell, a query param) or needs to leave as one. `string_to_array` splits; `array_to_string` joins:
+
+<Run>
+SELECT string_to_array('postgres,arrays,sql', ',') AS split,
+       array_to_string(ARRAY['postgres', 'arrays', 'sql'], ' / ') AS joined;
+</Run>
+
+## A note on indexing
+
+On a big table, `WHERE tags @> ARRAY['postgres']` would scan every row. A **GIN index** on the array column fixes that — it accelerates `@>`, `\<@`, `&&`, and `= ANY` membership by mapping each element back to the rows that contain it. We'll build one in the index-types lesson; for now, just know that tag-style array queries have a purpose-built index waiting for them.
+
+## Your turn
+
+The "Hello, world" article has an empty `tags` array. Give it a warm welcome: append the tag `'welcome'` so its tags become `{welcome}`.
+
+<Run>
+UPDATE articles
+SET tags = array_append(tags, 'welcome')
+WHERE title = 'Hello, world';
+</Run>
+
+<Check id="hello-tagged">
+Append `'welcome'` to the "Hello, world" article's tags. We'll confirm the row's `tags` is exactly `\{welcome\}`.
+</Check>
+
+## What you learned
+
+- Any type can be an array: `text[]`, `int[]`, etc. Write literals with the `ARRAY[...]` constructor or the curly-brace string form `'{a,b}'` — same result.
+- Indexing is **1-based**, and out-of-bounds reads return `NULL` instead of erroring. Slice with `arr[2:3]`.
+- `cardinality(arr)` counts elements (0 for empty); `array_length(arr, 1)` returns `NULL` for an empty array.
+- `unnest()` explodes an array into rows (great in `FROM`); `array_agg()` collects rows back into an array.
+- Membership is `x = ANY(arr)`; array-vs-array uses `@>` (contains), `<@` (contained by), and `&&` (overlaps).
+- Mutate by rebuilding: `array_append`, `array_prepend`, `array_remove`, `array_cat` / `||`, and locate with `array_position`. Convert with `string_to_array` / `array_to_string`.
+- A GIN index accelerates `@>`, `<@`, `&&`, and `= ANY` on array columns.
+
+Up next: full-text search — searching documents with tsvector and tsquery.
