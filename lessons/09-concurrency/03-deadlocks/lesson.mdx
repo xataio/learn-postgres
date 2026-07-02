@@ -1,0 +1,125 @@
+Locking lets one transaction wait for another to finish. A *deadlock* is what happens when two transactions wait for *each other* — a circular standoff neither can escape. This lesson shows how that arises, how Postgres breaks it, and the simple ordering discipline that stops it from happening at all.
+
+The seed is the Module 9 ledger: four `accounts` with a starting balance of 100 each.
+
+<Run>
+SELECT id, owner, balance FROM accounts ORDER BY id;
+</Run>
+
+## What a deadlock actually is
+
+Picture two money transfers running at the same moment. One moves money from Ada (id 1) to Sofia (id 4); the other moves money from Sofia to Ada. Each `UPDATE` takes a row lock, and each transaction grabs its two rows in a different order:
+
+```sql
+-- Session 1: transfer ada -> sofia
+BEGIN;
+UPDATE accounts SET balance = balance - 10 WHERE id = 1;  -- locks row 1
+-- ... now wants row 4, but Session 2 holds it
+UPDATE accounts SET balance = balance + 10 WHERE id = 4;  -- BLOCKS
+```
+
+```sql
+-- Session 2: transfer sofia -> ada
+BEGIN;
+UPDATE accounts SET balance = balance - 10 WHERE id = 4;  -- locks row 4
+-- ... now wants row 1, but Session 1 holds it
+UPDATE accounts SET balance = balance + 10 WHERE id = 1;  -- BLOCKS
+```
+
+Session 1 holds row 1 and waits for row 4. Session 2 holds row 4 and waits for row 1. Neither will ever release, because each is blocked on the other. That cycle is a deadlock. Note it has nothing to do with *how much* work each does — it is purely the *order* in which they reach for the two locks.
+
+## Postgres detects it and picks a victim
+
+Left alone, those two sessions would hang forever. Postgres doesn't allow that. Whenever a transaction waits on a lock for longer than `deadlock_timeout` (default 1 second), the engine pauses to check the wait graph for a cycle. If it finds one, it aborts one of the transactions — the *victim* — so the other can proceed:
+
+```
+ERROR:  deadlock detected
+DETAIL:  Process 12345 waits for ShareLock on transaction 678;
+         blocked by process 12346.
+         Process 12346 waits for ShareLock on transaction 679;
+         blocked by process 12345.
+HINT:  See server log for details.
+```
+
+The victim's transaction is rolled back with `SQLSTATE 40P01` (`deadlock detected`). The survivor commits normally. So a deadlock is never *silent* data corruption — it is a loud, catchable error. Your job as the application is to **catch `40P01` and retry** the losing transaction, which will almost always succeed on the second attempt once the other side is done.
+
+The 1-second pause is deliberate: deadlock detection is comparatively expensive, so Postgres assumes most lock waits are brief and only goes hunting for a cycle once a wait looks genuinely stuck.
+
+## The fix: acquire locks in a consistent order
+
+A deadlock cycle can only form when two transactions take the *same* set of locks in *different* orders. Remove the disagreement and the cycle is impossible. The rule: **always lock rows in a consistent order** — for our ledger, lowest `id` first.
+
+Rewrite both transfers to touch the lower id before the higher id, regardless of which direction the money flows. Now the ada→sofia transfer and the sofia→ada transfer both grab row 1, then row 4. One of them gets row 1 and the other simply *waits* for it — a normal, brief wait, not a cycle. Whoever wins finishes and releases; the other then proceeds. No deadlock is even possible.
+
+Here is a full ada→sofia transfer that respects that order, done as one atomic transaction. It updates id 1 first, then id 4:
+
+<Run>
+BEGIN;
+UPDATE accounts SET balance = balance - 10 WHERE id = 1;
+UPDATE accounts SET balance = balance + 10 WHERE id = 4;
+COMMIT;
+</Run>
+
+Check the result — 10 has moved from Ada to Sofia, and the total is still 400:
+
+<Run>
+SELECT id, owner, balance FROM accounts ORDER BY id;
+</Run>
+
+If you want the ordering to be automatic no matter how the caller phrases the transfer, lock the two rows up front with `SELECT ... FOR UPDATE` and an explicit `ORDER BY id`, then apply the deltas. The `ORDER BY` guarantees the locks are taken low-id-first even when the "from" account has the higher id:
+
+<Run>
+BEGIN;
+SELECT id, balance FROM accounts WHERE id IN (1, 4) ORDER BY id FOR UPDATE;
+UPDATE accounts SET balance = balance + 10 WHERE id = 1;
+UPDATE accounts SET balance = balance - 10 WHERE id = 4;
+COMMIT;
+</Run>
+
+That transaction moves the 10 back. Keeping transactions short and touching rows in a predictable order is the whole discipline: fewer locks held for less time, always in the same sequence.
+
+## Advisory locks: an app-level mutex
+
+Sometimes the thing you need to serialize isn't a single row — it's a *critical section* keyed by some value (a user id, an account number, a batch name). Postgres offers **advisory locks**: locks on an arbitrary integer key that *you* decide the meaning of. They don't protect any row automatically; they're a cooperative mutex your code agrees to honor.
+
+The transaction-scoped variant, `pg_advisory_xact_lock(key)`, blocks until it holds the lock and releases automatically at commit or rollback — so you can't leak it. Take one keyed on an account before doing work, and any other transaction using the same key must wait its turn. Here we guard a read of Ada's balance behind the lock keyed on her id (the block leaves balances untouched):
+
+<Run>
+BEGIN;
+SELECT pg_advisory_xact_lock(1);
+SELECT owner, balance FROM accounts WHERE id = 1;
+COMMIT;
+</Run>
+
+Everything between taking the lock and the commit is a critical section: because everyone locks on the same key in the same way, only one transaction runs it at a time — a clean way to serialize work that spans several rows or tables, even work that no single-row lock would cover. (There is also session-scoped `pg_advisory_lock`, which you must release yourself with `pg_advisory_unlock`; prefer the `xact` form so a forgotten unlock can't strand a lock.) Even with advisory locks, order your keys consistently if you take more than one — the deadlock rule never stops applying.
+
+## Your turn
+
+Move 30 from Ada (id 1) to Sofia (id 4) as one atomic transaction, locking the two rows in id order so this transfer could never deadlock with a concurrent one. Update the lower id first. Try it before peeking — here's one way:
+
+<Run>
+BEGIN;
+UPDATE accounts SET balance = balance - 30 WHERE id = 1;
+UPDATE accounts SET balance = balance + 30 WHERE id = 4;
+COMMIT;
+</Run>
+
+Confirm the balances — Ada should be at 70 and Sofia at 130, with the ledger total unchanged at 400:
+
+<Run>
+SELECT owner, balance FROM accounts ORDER BY id;
+</Run>
+
+<Check id="consistent-order-transfer">
+Run the transfer above so it locks id 1 before id 4. We'll confirm the final balances are ada=70, grace=100, linus=100, sofia=130 — the total is still 400, and the ordering makes the transfer deadlock-safe.
+</Check>
+
+## What you learned
+
+- A deadlock is a cycle of waits: transaction A holds lock 1 and wants lock 2 while transaction B holds lock 2 and wants lock 1 — neither can proceed.
+- Postgres detects the cycle after `deadlock_timeout` (default 1s) and aborts one transaction with `deadlock detected` (`SQLSTATE 40P01`); the survivor commits. The victim should catch the error and retry.
+- The reliable cure is a consistent lock order — always touch rows in the same sequence (e.g. lowest id first), so two transactions can never disagree and form a cycle.
+- `SELECT ... FOR UPDATE ... ORDER BY id` locks rows in a guaranteed order up front, making a transfer safe regardless of direction. Keep transactions short.
+- `pg_advisory_xact_lock(key)` is an app-level mutex on an arbitrary key that releases at commit — handy for serializing a critical section that spans more than one row.
+
+Up next: Module 10 — Expert & operations, starting with roles and privileges.
