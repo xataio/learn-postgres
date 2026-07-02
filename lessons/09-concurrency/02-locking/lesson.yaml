@@ -1,0 +1,23 @@
+title: Locking
+summary: Explicit locks in Postgres — SELECT … FOR UPDATE, the read-modify-write pattern, NOWAIT and SKIP LOCKED for job queues, and reading pg_locks.
+estimatedMinutes: 15
+tags:
+  - locking
+  - for-update
+  - skip-locked
+  - row-locks
+  - pg-locks
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: transfer-locked
+    type: query-returns
+    description: Transfer 30 from Grace to Ada inside one locked transaction.
+    sql: SELECT owner, balance FROM accounts ORDER BY owner
+    expect:
+      rowCount: 3
+      rows:
+        - [ada, 130]
+        - [grace, 70]
+        - [linus, 100]
