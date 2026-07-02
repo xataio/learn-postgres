@@ -1,0 +1,13 @@
+title: Reading EXPLAIN
+summary: Read the planner's query plan — the cost estimates, the tree of nodes, and what EXPLAIN ANALYZE adds by actually running the query.
+estimatedMinutes: 15
+tags:
+  - explain
+  - explain-analyze
+  - query-plan
+  - performance
+  - buffers
+authors:
+  - exekias
+seed: seed.sql
+checks: []

@@ -1,0 +1,200 @@
+Last lesson you added an index and *believed* it helped. `EXPLAIN` is how you check: it shows the exact plan the planner chose, node by node, so you stop guessing and start reading. This lesson is pure exploration — every query here is read-only, so run them freely and watch the plans change.
+
+The seed is a classic pair of tables: ~4,000 `customers` and ~40,000 `orders`, with an index on `orders.customer_id`. Enough rows that the planner has real choices to make.
+
+<Run>
+SELECT
+  (SELECT count(*) FROM customers) AS customers,
+  (SELECT count(*) FROM orders)    AS orders;
+</Run>
+
+## EXPLAIN shows the plan without running the query
+
+Put `EXPLAIN` in front of any query and Postgres returns its *plan* — what it intends to do — without executing it:
+
+<Run>
+EXPLAIN SELECT * FROM orders WHERE customer_id = 42;
+</Run>
+
+You'll see something like this. Your numbers will differ from run to run and machine to machine — read the shape, not the digits:
+
+```text
+Index Scan using orders_customer_id_idx on orders  (cost=0.29..40.62 rows=10 width=29)
+  Index Cond: (customer_id = 42)
+```
+
+The planner picked an **Index Scan**: it walks the index on `customer_id` straight to the matching rows instead of reading all 40,000. That's the index from the previous lesson earning its keep.
+
+## The estimate line: cost, rows, width
+
+Every plan node ends with a parenthesized estimate. Decode it:
+
+```text
+(cost=0.29..40.62 rows=10 width=29)
+```
+
+- **`cost=startup..total`** — two numbers in arbitrary units (roughly "how many sequential page reads would cost the same"). `startup` is the cost before the *first* row can be returned; `total` is the cost to return *all* rows. They are estimates, not milliseconds — only useful for comparing plans against each other.
+- **`rows=10`** — how many rows the planner *estimates* this node will emit.
+- **`width=29`** — estimated average row size in bytes. Wider rows mean more data to move.
+
+The `startup` vs `total` split matters for `LIMIT`: a plan with high startup cost is a bad fit when you only want the first few rows. Compare an index scan (tiny startup, it can stream) against a sort (must consume everything before emitting the first row):
+
+<Run>
+EXPLAIN SELECT * FROM orders ORDER BY amount DESC LIMIT 5;
+</Run>
+
+## A plan is a tree — read it inside-out
+
+Bigger queries produce a tree of nodes. Indentation shows the shape: **each child feeds its parent**, so you read from the most-indented (innermost) node outward and upward. The innermost nodes run first; the top node produces the final result.
+
+Here's a join between our two tables, filtered to one customer:
+
+<Run>
+EXPLAIN SELECT c.name, o.status, o.amount
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+WHERE c.id = 42;
+</Run>
+
+A plan like this:
+
+```text
+Nested Loop  (cost=0.58..49.10 rows=10 width=40)
+  ->  Index Scan using customers_pkey on customers c  (cost=0.28..8.30 rows=1 width=15)
+        Index Cond: (id = 42)
+  ->  Index Scan using orders_customer_id_idx on orders o  (cost=0.29..40.62 rows=10 width=29)
+        Index Cond: (customer_id = 42)
+```
+
+Read it inside-out: find the one customer via its primary-key index (innermost), then for that customer look up their orders via the `customer_id` index, and the **Nested Loop** on top stitches each customer row to its matching order rows. One customer, so the loop runs once — cheap.
+
+## EXPLAIN ANALYZE actually runs the query
+
+`EXPLAIN` only *estimates*. Add `ANALYZE` and Postgres **executes the query for real**, then reports actual timings and row counts next to the estimates:
+
+<Run>
+EXPLAIN (ANALYZE) SELECT c.name, o.status, o.amount
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+WHERE c.id = 42;
+</Run>
+
+```text
+Nested Loop  (cost=0.58..49.10 rows=10 width=40) (actual time=0.031..0.052 rows=10 loops=1)
+  ->  Index Scan using customers_pkey on customers c  (cost=0.28..8.30 rows=1 width=15) (actual time=0.012..0.013 rows=1 loops=1)
+        Index Cond: (id = 42)
+  ->  Index Scan using orders_customer_id_idx on orders o  (cost=0.29..40.62 rows=10 width=29) (actual time=0.010..0.020 rows=10 loops=1)
+        Index Cond: (customer_id = 42)
+Planning Time: 0.180 ms
+Execution Time: 0.090 ms
+```
+
+Now each node carries `(actual time=startup..total rows=N loops=L)` in real milliseconds, plus two summary lines at the bottom: **Planning Time** (choosing the plan) and **Execution Time** (running it).
+
+> **`ANALYZE` executes the query.** For a `SELECT` that's harmless. For an `UPDATE`, `DELETE`, or `INSERT` it will *actually change your data*. To inspect a write safely, wrap it in a transaction and roll back — or just don't run `ANALYZE` on destructive statements.
+
+```sql
+BEGIN;
+EXPLAIN (ANALYZE) DELETE FROM orders WHERE status = 'cancelled';
+ROLLBACK;
+```
+
+### `loops` multiplies
+
+`loops=L` is how many times a node ran. Inside a Nested Loop, the inner node runs once *per outer row*, and the `actual time` shown is **per loop** — so the real total is roughly `time × loops`. When a join touches many customers, that inner scan repeats a lot:
+
+<Run>
+EXPLAIN (ANALYZE) SELECT c.country, count(*)
+FROM customers c
+JOIN orders o ON o.customer_id = c.id
+GROUP BY c.country;
+</Run>
+
+Watch for a big `loops` on an expensive inner node — that's often where time goes.
+
+### Estimated vs actual = stale statistics
+
+The most valuable habit: compare the estimated `rows=` to the actual `rows=`. Close together means the planner understands your data. Wildly off (estimate 10, actual 10,000) means its **statistics are stale**, and it may have picked a bad plan on bad information. The fix is to refresh them:
+
+```sql
+ANALYZE orders;
+```
+
+That's the manual version of what **autovacuum** does in the background. Our seed already ran `ANALYZE`, so your estimates should track reality — a stale table in production is where they drift apart.
+
+## Node types you'll keep seeing
+
+The plan vocabulary is small once you recognize the players:
+
+**Scans** — how a single table is read:
+
+- **Seq Scan** — read every row. Fine for small tables or when a filter matches most rows.
+- **Index Scan** — walk an index to the matching rows, then fetch each from the table. Great when few rows match.
+- **Index Only Scan** — answered entirely from the index, no table fetch, because every column needed is in the index.
+- **Bitmap Index Scan + Bitmap Heap Scan** — a middle ground: build a bitmap of matching row locations from the index, then read the table in physical order. Postgres picks this when a query matches *too many* rows for a plain Index Scan (random fetches would hurt) but *too few* to bother reading the whole table.
+
+Force each end of that spectrum. A rare status is selective enough for an index-style plan; the dominant status matches ~85% of the table, so a Seq Scan wins:
+
+<Run>
+EXPLAIN SELECT * FROM orders WHERE status = 'cancelled';
+</Run>
+
+<Run>
+EXPLAIN SELECT * FROM orders WHERE status = 'shipped';
+</Run>
+
+**Joins** — how two inputs are combined:
+
+- **Nested Loop** — for each outer row, probe the inner side. Best when one side is tiny (like our one-customer join).
+- **Hash Join** — build a hash table from one side, stream the other through it. The planner's usual pick for joining two large sets.
+- **Merge Join** — both inputs sorted on the join key, then zipped together.
+
+Join *all* orders to their customers and the planner switches strategy — no single-row filter, so a Hash Join over the whole tables beats looping:
+
+<Run>
+EXPLAIN SELECT c.name, o.amount
+FROM customers c
+JOIN orders o ON o.customer_id = c.id;
+</Run>
+
+**The rest** — **Sort**, **Aggregate** / **HashAggregate** (what `GROUP BY` produces), and **Limit** (stops early once it has enough rows) round out the set.
+
+## `BUFFERS` shows the I/O
+
+Timings tell you *how long*; `BUFFERS` tells you *how much data moved*. Add it to see shared-buffer **hits** (found in cache) versus **reads** (fetched from disk) — the real cost of a query is often I/O, not CPU:
+
+<Run>
+EXPLAIN (ANALYZE, BUFFERS) SELECT * FROM orders WHERE status = 'shipped';
+</Run>
+
+```text
+Seq Scan on orders  (cost=0.00.....) (actual time=... rows=34000 loops=1)
+  Filter: (status = 'shipped'::text)
+  Rows Removed by Filter: 6000
+  Buffers: shared hit=294
+Planning Time: ...
+Execution Time: ...
+```
+
+A high `read=` count on a supposedly fast query is a red flag — that's disk I/O the query planner had to pay for. `Rows Removed by Filter` is a bonus: rows the scan touched and then threw away, a hint that an index might have skipped them entirely.
+
+A few more options worth knowing:
+
+- **`VERBOSE`** — output column lists and fully-qualified names for each node.
+- **`SETTINGS`** — show any planner settings changed from their defaults (handy when a plan looks surprising).
+- **`FORMAT JSON`** — machine-readable output, for tools and plan visualizers.
+
+<Run>
+EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) SELECT * FROM orders WHERE customer_id = 42;
+</Run>
+
+## What you learned
+
+- `EXPLAIN` shows the planner's chosen plan *without* running the query; `EXPLAIN (ANALYZE)` runs it for real and reports actual timings and row counts — so never `ANALYZE` a write unless it's wrapped in a transaction you `ROLLBACK`.
+- A plan is a tree: read from the most-indented (innermost) nodes outward and upward — each node feeds its parent.
+- The estimate line is `cost=startup..total rows=N width=B`: costs are arbitrary units for comparing plans, `startup` is cost-to-first-row (matters with `LIMIT`), `rows` and `width` are estimates.
+- With `ANALYZE`, watch two things: `loops=L` (an inner node's time is *per loop*, so multiply), and estimated-vs-actual `rows` — a big gap means stale statistics, so run `ANALYZE` (or let autovacuum).
+- Recognize the node types: Seq / Index / Index Only / Bitmap scans; Nested Loop / Hash / Merge joins; Sort, Aggregate/HashAggregate, Limit — and why selectivity decides which scan Postgres picks.
+- `EXPLAIN (ANALYZE, BUFFERS)` exposes cache hits vs disk reads; `VERBOSE`, `SETTINGS`, and `FORMAT JSON` add detail when you need it.
+
+Up next: index types beyond B-tree — GIN, GiST, BRIN, and more.
