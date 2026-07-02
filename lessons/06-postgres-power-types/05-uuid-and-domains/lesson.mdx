@@ -1,0 +1,129 @@
+Not every identity is an auto-incrementing integer, and not every constraint has to be copy-pasted onto every table. This lesson covers three tools for shaping *your own* types: `uuid` keys you can generate anywhere, `enum` types for a fixed set of labels, and `domain` types that bundle a base type with a rule you write once. The seed is a small SaaS `accounts` table that uses all three.
+
+Take a look at how it's shaped:
+
+<Run>
+SELECT column_name, data_type, udt_name
+FROM information_schema.columns
+WHERE table_name = 'accounts'
+ORDER BY ordinal_position;
+</Run>
+
+Notice `id` reports `uuid`, and the domain columns show their base type in `data_type` with the domain name in `udt_name` — a hint that a domain is a base type wearing a label.
+
+## `uuid` keys with `gen_random_uuid()`
+
+A `uuid` is a 128-bit identifier, printed as 32 hex digits in five dash-separated groups. Postgres 13+ ships `gen_random_uuid()` in core — no extension needed — so you can hand a table a random primary key by default:
+
+<Run>
+SELECT gen_random_uuid() AS a, gen_random_uuid() AS b;
+</Run>
+
+Two calls, two different values, effectively never colliding. The seed's `accounts.id` is defined as `id uuid PRIMARY KEY DEFAULT gen_random_uuid()`, so an insert that omits `id` gets one for free:
+
+<Run>
+INSERT INTO accounts (email, status, seats)
+VALUES ('margaret@example.com', 'trial', 3)
+RETURNING id, email;
+</Run>
+
+`RETURNING id` hands the generated key straight back — the same pattern as an identity column, but the value came from a function you could also have called in your application before inserting.
+
+## Why (and why not) a UUID key
+
+That last point is the headline: a UUID is generatable *anywhere*. Your app, a mobile client, or three different services can each mint a key without a round-trip to the database and without coordinating — no shared sequence, no cross-shard collisions when you later split the table across servers. UUIDs are also **globally unique** (an id means the same thing across every table and system) and **not guessable**, so exposing one in a URL doesn't leak "how many accounts exist" the way `/account/1042` does.
+
+The costs are real, though:
+
+- **Size.** A `uuid` is 16 bytes versus 8 for a `bigint` — doubled in the row and in every index and foreign key that references it.
+- **Index locality.** A random UUIDv4 lands in a random spot in the primary-key B-tree on every insert, scattering writes across the index instead of appending to the end like a sequence does. On a hot table that hurts cache behavior and bloats the index.
+
+The modern answer is a **time-ordered UUID (UUIDv7)**: still globally unique and unguessable, but with a timestamp prefix so new keys sort near each other and insert like a sequence. Core Postgres 16 doesn't generate v7 yet (later versions do), so today you'd use an extension or generate it in the app — the point is that "UUIDs kill index locality" is a v4 problem, not a UUID problem. Reach for `bigint` identity keys by default; choose UUIDs when client-side generation or non-guessability earns their weight.
+
+## Enum types: a fixed set of labels
+
+You met enums in the data-types lesson; here's the one-line refresher and the part that bites later. `CREATE TYPE account_status AS ENUM ('trial', 'active', 'suspended')` pins a column to those three labels — compact on disk (4 bytes) and self-documenting. They sort in **declaration order**, not alphabetically, which is usually exactly the lifecycle you want:
+
+<Run>
+SELECT email, status
+FROM accounts
+ORDER BY status;
+</Run>
+
+`trial` comes before `active` before `suspended` because that's how they were declared. Adding a new label is one statement:
+
+<Run>
+ALTER TYPE account_status ADD VALUE 'churned';
+</Run>
+
+The catch worth remembering: you can add values but **can't easily remove or reorder** them — there's no `DROP VALUE`, and `ADD VALUE ... BEFORE`/`AFTER` only positions the new one. When the set of labels changes often, a lookup table with a foreign key stays more flexible than an enum.
+
+## Domains: a base type plus a rule
+
+Here's the new idea. A **domain** is a reusable type: a base type (`text`, `integer`, …) with optional constraints baked in. Define the rule once, then use the domain as a column type anywhere and every table inherits the check.
+
+The seed declares two:
+
+```sql
+CREATE DOMAIN email AS text
+  CHECK (VALUE ~ '^[^@]+@[^@]+$');
+
+CREATE DOMAIN positive_int AS integer
+  CHECK (VALUE > 0);
+```
+
+`VALUE` is the placeholder for whatever's being stored. `accounts.email` is of type `email` and `accounts.seats` is `positive_int`, so the constraints ride along automatically. Try to store an address with no `@` and the domain rejects it:
+
+<Run>
+INSERT INTO accounts (email, seats)
+VALUES ('not-an-email', 1);
+</Run>
+
+The error names the domain (`value for domain email violates check constraint`) — the failure is self-documenting. Same story for a non-positive seat count:
+
+<Run>
+INSERT INTO accounts (email, seats)
+VALUES ('valid@example.com', 0);
+</Run>
+
+## Why a domain beats a repeated CHECK
+
+You *could* write `CHECK (seats > 0)` on every table that has a seat count, and `CHECK (email ~ '...')` on every table with an email. But then the rule lives in a dozen places: change the email pattern and you're hunting down each copy, and a table that forgets the check is a silent hole.
+
+A domain flips that. One definition is the single source of truth, enforced on **every** column that uses the type, and the column's type name (`email`, not `text`) documents intent at a glance. A domain can also carry `NOT NULL`, folding nullability into the type itself:
+
+<Run>
+CREATE DOMAIN required_text AS text NOT NULL CHECK (char_length(VALUE) > 0);
+</Run>
+
+A column typed `required_text` is non-null and non-empty by definition — no per-table constraint to remember.
+
+## Your turn
+
+Give accounts a display name that must be present and non-empty. Add a `display_name` column using the `required_text` domain you just created:
+
+<Run>
+ALTER TABLE accounts ADD COLUMN display_name required_text DEFAULT 'unnamed';
+</Run>
+
+The `DEFAULT` matters here: the domain forbids NULL, and the existing rows need *some* value, so you supply one. Confirm the column landed with the right underlying type:
+
+<Run>
+SELECT column_name, data_type, domain_name
+FROM information_schema.columns
+WHERE table_name = 'accounts' AND column_name = 'display_name';
+</Run>
+
+<Check id="accounts-uuid-pk">
+The seed created `accounts` with a `uuid` primary key. We'll confirm `accounts.id` has type `uuid`.
+</Check>
+
+## What you learned
+
+- `uuid` is a 128-bit key; `gen_random_uuid()` is built into core Postgres 13+ (no extension), so `id uuid PRIMARY KEY DEFAULT gen_random_uuid()` gives you random keys for free.
+- UUIDs are globally unique, generatable client-side, and unguessable — but cost 16 bytes vs 8, and a random UUIDv4 hurts index locality on inserts. Time-ordered UUIDv7 fixes the locality problem; default to `bigint` identity unless UUID's benefits earn their keep.
+- `enum` types pin a column to a fixed label set, sort in declaration order, and grow with `ALTER TYPE ... ADD VALUE` — but you can't easily remove or reorder values.
+- A `domain` is a base type plus a reusable `CHECK` (and optionally `NOT NULL`): `CREATE DOMAIN email AS text CHECK (VALUE ~ '...')`. Define the rule once and every column of that type enforces it.
+- A domain beats repeating a CHECK on every table: one source of truth, enforced everywhere, with a type name that documents the column's intent.
+
+Up next: Module 7 — Performance & indexing, starting with the basics of indexes.

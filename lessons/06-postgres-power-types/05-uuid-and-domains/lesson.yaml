@@ -1,0 +1,19 @@
+title: UUIDs and domains
+summary: Custom identity and reusable types — uuid primary keys with gen_random_uuid(), enum types, and domains that bundle a base type with a CHECK you write once and enforce everywhere.
+estimatedMinutes: 13
+tags:
+  - uuid
+  - gen-random-uuid
+  - enum
+  - domain
+  - check-constraint
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: accounts-uuid-pk
+    type: schema-state
+    description: The accounts table's id column is a uuid.
+    table: accounts
+    column: id
+    columnType: uuid
