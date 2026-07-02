@@ -1,0 +1,22 @@
+title: Index types beyond B-tree
+summary: When GIN, GiST, BRIN, hash, partial, expression, and covering indexes each beat a plain B-tree — and what they cost.
+estimatedMinutes: 15
+tags:
+  - indexes
+  - gin
+  - gist
+  - brin
+  - partial-index
+  - covering-index
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: tags-gin-created
+    type: query-returns
+    description: Build the GIN index on the tags array.
+    sql: "SELECT count(*) FROM pg_indexes WHERE tablename = 'docs' AND indexdef ILIKE '%gin (tags%'"
+    expect:
+      rowCount: 1
+      rows:
+        - [1]
