@@ -1,0 +1,13 @@
+title: "Indexes: the basics"
+summary: How a B-tree index turns a full-table scan into a targeted lookup — and when it won't help.
+estimatedMinutes: 15
+tags:
+  - indexes
+  - b-tree
+  - create-index
+  - explain
+  - selectivity
+authors:
+  - exekias
+seed: seed.sql
+checks: []
