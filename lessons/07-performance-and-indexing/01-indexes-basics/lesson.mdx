@@ -1,0 +1,181 @@
+An index is the single biggest lever you have on query speed. This lesson builds the mental model — what an index *is*, when Postgres uses one, and when it correctly ignores the one you built.
+
+The seed is an `events` table with **twenty-five million rows**: an `id`, a high-cardinality `user_id`, a lopsided `status`, a `created_at`, and an `amount`. Big enough that the difference between reading every row and jumping straight to a few isn't just visible in the plan — you can watch it in the query's execution time.
+
+<Run>
+SELECT count(*) FROM events;
+</Run>
+
+## The problem: a Seq Scan reads everything
+
+Ask for one user's events. There's no index yet, so watch how Postgres plans it:
+
+<Run>
+EXPLAIN SELECT * FROM events WHERE user_id = 42;
+</Run>
+
+The top line says **Seq Scan on events** — a *sequential scan*. To find the handful of rows for user 42, Postgres reads all twenty-five million rows and throws away the ones that don't match. The `rows=` estimate on that line is roughly the whole table.
+
+That's the default when there's no better path. It's correct, it's just linear: double the table, double the work. Every filtered query without a useful index pays this.
+
+Think of the table as a book with no index at the back. To find every mention of "user 42" you read the book cover to cover.
+
+`EXPLAIN` only *estimated* that plan — it never ran the query. Add `ANALYZE` and Postgres actually executes it and prints the real **Execution Time** on the last line:
+
+<Run>
+EXPLAIN ANALYZE SELECT * FROM events WHERE user_id = 42;
+</Run>
+
+On twenty-five million rows that's a few hundred milliseconds — the price of touching every row to return a few dozen. Hold onto that number; we're about to crush it. (Confusingly, the `ANALYZE` *inside* `EXPLAIN ANALYZE` means "run it and time it" — it is **not** the standalone `ANALYZE` command we use next, which gathers statistics. Reading these plans in full is the next lesson; for now just watch the Execution Time.)
+
+## Give the planner stats first
+
+Before we compare plans, run `ANALYZE` — the *statistics* command this time, not the `EXPLAIN ANALYZE` from a moment ago. It gathers statistics (row counts, value distributions) that the planner uses to *estimate* how many rows a filter will return. Fresh seed data may not have stats yet, and a planner guessing blind makes bad choices:
+
+<Run>
+ANALYZE events;
+</Run>
+
+## The fix: CREATE INDEX
+
+An index is a separate, sorted structure that maps column values to the rows that hold them — the index at the back of the book. Postgres's default index type is a **B-tree**: a balanced tree kept in sorted order, so it can binary-search to a value in a few steps instead of scanning.
+
+Build one on `user_id`:
+
+<Run>
+CREATE INDEX events_user_id_idx ON events (user_id);
+</Run>
+
+Now re-check the same query's plan:
+
+<Run>
+EXPLAIN SELECT * FROM events WHERE user_id = 42;
+</Run>
+
+The plan changed to an **Index Scan using events_user_id_idx** (you may also see a *Bitmap Index Scan* — same idea). Instead of reading twenty-five million rows, Postgres walks the sorted index to user 42's entries and fetches just those. The estimated `rows=` dropped to a tiny number. Same query, same result, a fraction of the work.
+
+Now put it on the same clock:
+
+<Run>
+EXPLAIN ANALYZE SELECT * FROM events WHERE user_id = 42;
+</Run>
+
+There's the payoff. The Execution Time falls from a few hundred milliseconds to a *fraction of one* — orders of magnitude faster — because Postgres jumped straight to user 42's rows instead of reading twenty-five million. And the gap only *widens* as the table grows: the Seq Scan slows down with every row you add; the index barely notices.
+
+<Check id="user-id-index-created">
+Run the `CREATE INDEX` above so `events` has a B-tree index on `user_id`. We'll confirm the index exists on your branch.
+</Check>
+
+## What a B-tree covers
+
+A B-tree isn't only for `=`. Because it stores values *in sorted order*, it accelerates anything that maps to a contiguous slice of that order:
+
+```sql
+WHERE user_id = 42            -- equality
+WHERE user_id < 100          -- range: <  <=  >  >=
+WHERE user_id BETWEEN 10 AND 20
+WHERE user_id IN (1, 2, 3)
+WHERE user_id IS NULL
+ORDER BY user_id             -- reading the index in order avoids a sort
+```
+
+It also handles a *prefix* `LIKE`, because `'ab%'` is a contiguous range of sorted text — but not an infix match:
+
+```sql
+WHERE status LIKE 'pen%'     -- can use a B-tree (anchored prefix)
+WHERE status LIKE '%ing'     -- cannot: no fixed prefix to seek to
+```
+
+Try a range and confirm it's still an Index Scan — the sorted structure does the range for free:
+
+<Run>
+EXPLAIN SELECT * FROM events WHERE user_id BETWEEN 10 AND 20;
+</Run>
+
+## Selectivity: an index only pays off for *few* rows
+
+Here's the part that surprises people. An index helps when a query returns a **small fraction** of the table. When a predicate matches *most* rows, using the index — bounce to the index, then back to the heap for each match — is slower than just reading the table straight through. So the planner won't.
+
+Our `status` column is lopsided: about 80% of rows are `'ok'`. Build an index on it anyway and ask for the common value:
+
+<Run>
+CREATE INDEX events_status_idx ON events (status);
+</Run>
+
+<Run>
+EXPLAIN SELECT * FROM events WHERE status = 'ok';
+</Run>
+
+Still a **Seq Scan** — the planner ignores the index on purpose, because reading twenty million scattered rows via the index is worse than one straight pass. Now ask for a *rare* status instead:
+
+<Run>
+EXPLAIN SELECT * FROM events WHERE status = 'refunded';
+</Run>
+
+This time the index gets used (an Index Scan or Bitmap Index Scan), because `'refunded'` is ~1% of rows. Same column, same index — the *value's* selectivity decides. The lesson: indexing a low-cardinality column that you usually filter on for its common value buys you little.
+
+## Multicolumn indexes and the left-prefix rule
+
+You can index several columns at once. Order matters, and it follows the **left-prefix rule**: an index on `(a, b)` can serve queries that filter on `a`, or on `a` *and* `b`, but **not** on `b` alone.
+
+The index is sorted by `a` first, then by `b` within each `a` — like a phone book sorted by last name, then first name. You can find "everyone named Smith", or "Smith, John", but not "everyone named John" without scanning.
+
+Build a composite index on `(user_id, status)`:
+
+<Run>
+CREATE INDEX events_user_status_idx ON events (user_id, status);
+</Run>
+
+Filtering on the leading column (`user_id`) can use it:
+
+<Run>
+EXPLAIN SELECT * FROM events WHERE user_id = 42 AND status = 'ok';
+</Run>
+
+But filtering on only the *second* column (`status`) can't use this index for a seek — the planner falls back to the standalone `status` index or a Seq Scan, never this composite:
+
+<Run>
+EXPLAIN SELECT * FROM events WHERE status = 'pending';
+</Run>
+
+Rule of thumb: put the column you filter on most (usually with equality) first.
+
+## UNIQUE indexes come with constraints
+
+A **unique index** does double duty: it speeds lookups *and* enforces that no two rows share the value. You rarely build one by hand, because a `PRIMARY KEY` or `UNIQUE` constraint creates one for you automatically.
+
+Our `id` is the primary key, so Postgres already made an index named `events_pkey` — no `CREATE INDEX` required. Look it up by id and you'll get an Index Scan on it:
+
+<Run>
+EXPLAIN SELECT * FROM events WHERE id = 12345;
+</Run>
+
+To enforce uniqueness on your own column, you'd write `CREATE UNIQUE INDEX ...` — and any insert that duplicates a value is rejected. It's a correctness tool that happens to be fast.
+
+## Indexes are not free
+
+Every index is a copy of some data that Postgres must keep in sync. That has a cost:
+
+- **Space.** Each index is a separate on-disk structure. Several indexes on a wide table can rival the table's own size.
+- **Write speed.** Every `INSERT`, and every `UPDATE`/`DELETE` that touches an indexed column, must update *every* affected index too. More indexes, slower writes.
+
+So don't index everything. Skip an index when:
+
+- The table is **tiny** — a Seq Scan of a few hundred rows is already instant, and the planner won't bother with the index anyway.
+- The column is **never filtered, joined, or sorted on** — an index nobody's queries can use is pure write-tax and wasted space.
+- The predicate is **low-selectivity** — as we saw with `status = 'ok'`, an index the planner rejects earns its keep never.
+
+Index the columns your real queries filter and join on, size them by selectivity, and leave the rest alone.
+
+## What you learned
+
+- Without a useful index, a filtered query does a **Seq Scan** — it reads every row. Cost grows with table size.
+- `CREATE INDEX name ON table (column)` builds a **B-tree**, a sorted structure Postgres can seek into. Run `ANALYZE` after loading data so the planner has stats to plan with.
+- `EXPLAIN` shows the plan (**Seq Scan** reads all vs **Index Scan** jumps to matches); `EXPLAIN ANALYZE` runs the query and reports the real **Execution Time** — on the twenty-five-million-row table the index turns a few hundred milliseconds into a fraction of one.
+- A B-tree serves `=`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `IN`, `IS NULL`, `ORDER BY`, and prefix `LIKE 'abc%'` — but not `LIKE '%abc'`.
+- **Selectivity decides usage:** an index helps only when the query returns a small fraction of rows. For common values the planner correctly sticks with a Seq Scan.
+- A multicolumn index on `(a, b)` follows the **left-prefix rule** — it serves `a` and `a+b`, not `b` alone. Lead with the column you filter on most.
+- `PRIMARY KEY` and `UNIQUE` constraints create a unique index automatically; it enforces uniqueness *and* speeds lookups.
+- Indexes cost space and slow down writes, because each one is maintained on every change. Don't index tiny tables, never-filtered columns, or low-selectivity predicates.
+
+Up next: reading EXPLAIN and EXPLAIN ANALYZE in depth.

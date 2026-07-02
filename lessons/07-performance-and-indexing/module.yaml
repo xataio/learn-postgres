@@ -1,0 +1,3 @@
+title: Performance and indexing
+difficulty: advanced
+summary: Make queries fast — indexes, reading EXPLAIN, and choosing the right index type.
