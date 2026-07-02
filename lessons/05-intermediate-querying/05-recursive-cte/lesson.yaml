@@ -1,0 +1,13 @@
+title: Recursive CTEs
+summary: WITH RECURSIVE walks trees and graphs — org charts, reporting chains, and cycle-safe traversal.
+estimatedMinutes: 15
+tags:
+  - recursive-cte
+  - with-recursive
+  - hierarchy
+  - graph
+  - cycle
+authors:
+  - exekias
+seed: seed.sql
+checks: []
