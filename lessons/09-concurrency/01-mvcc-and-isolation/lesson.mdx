@@ -1,0 +1,143 @@
+Postgres lets many transactions read and write at the same time without a global lock, and it stays correct. The trick is *MVCC* — Multi-Version Concurrency Control — plus a choice of *isolation level* that decides how much of other transactions' work you're allowed to see.
+
+The seed is the familiar `accounts` ledger: three owners, 100 each. We'll use it to see the row versions Postgres keeps under the hood, then reason about what concurrent transactions observe.
+
+## Rows carry hidden version columns
+
+Every row has system columns you don't normally select. Two of them, `xmin` and `xmax`, track *which transaction created this row version* and *which transaction deleted it* (0 means "still live"). Ask for them explicitly:
+
+<Run>
+SELECT xmin, xmax, id, owner, balance FROM accounts ORDER BY id;
+</Run>
+
+Each row shows the `xmin` of the transaction that inserted it and `xmax = 0` — nobody has superseded these versions yet.
+
+## An UPDATE writes a new version, it doesn't overwrite
+
+This is the heart of MVCC: `UPDATE` never edits a row in place. It marks the old version as expired (sets its `xmax`) and writes a brand-new version with a fresh `xmin`. Update Ada, then look again:
+
+<Run>
+UPDATE accounts SET balance = balance + 10 WHERE owner = 'ada';
+</Run>
+
+<Run>
+SELECT xmin, xmax, id, owner, balance FROM accounts ORDER BY id;
+</Run>
+
+Ada's row now has a *different* `xmin` than grace and linus — it's a new version, stamped by the transaction that just ran. The old version still physically exists on disk with its `xmax` set, invisible to new queries, until `VACUUM` reclaims it later. That's why writers don't block readers: an old reader can keep seeing the old version while a writer lays down a new one.
+
+## Every transaction reads from a snapshot
+
+When a transaction takes its snapshot, it freezes a consistent point-in-time view: it sees row versions committed before that instant, and ignores versions from transactions still in flight. Each transaction also has an ID you can read:
+
+<Run>
+SELECT txid_current();
+</Run>
+
+Run it twice and you get two different numbers — each runnable block here is its own transaction. Inside one transaction, that snapshot is what makes a reader see a stable, consistent picture even while other sessions commit changes around it.
+
+## The read phenomena
+
+The interesting question is *what a transaction is allowed to see* of other transactions. The SQL standard names four anomalies, from worst to subtlest:
+
+- **Dirty read** — you see another transaction's *uncommitted* changes. Postgres never allows this, at any level.
+- **Non-repeatable read** — you read a row, another transaction commits an UPDATE to it, you read it again and the value *changed* under you.
+- **Phantom read** — you run a query with a `WHERE`, another transaction commits an INSERT that matches it, you re-run and *new rows* appear.
+- **Serialization anomaly** — a set of transactions each look fine on their own, but their combined result couldn't have happened in any serial (one-at-a-time) order.
+
+## The four isolation levels
+
+You pick how much protection you want per transaction. Postgres implements three distinct levels (it accepts `READ UNCOMMITTED` but treats it as `READ COMMITTED`, since it never does dirty reads):
+
+| Level | Dirty read | Non-repeatable read | Phantom read | Serialization anomaly |
+|---|---|---|---|---|
+| Read Committed (default) | prevented | possible | possible | possible |
+| Repeatable Read | prevented | prevented | prevented | possible |
+| Serializable | prevented | prevented | prevented | prevented |
+
+Each stronger level takes a snapshot at a wider scope and does more bookkeeping — so it's safer but costs more. `READ COMMITTED`, the default, takes a *fresh* snapshot at the start of *each statement*. `REPEATABLE READ` and `SERIALIZABLE` take *one* snapshot at the first statement and hold it for the whole transaction.
+
+## Setting the level
+
+Two equivalent ways: name it on `BEGIN`, or `SET TRANSACTION` right after. Here's a whole transaction pinned to `REPEATABLE READ` — its two reads are guaranteed identical no matter what else commits in between:
+
+<Run>
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+SELECT owner, balance FROM accounts WHERE owner = 'ada';
+SELECT sum(balance) AS total FROM accounts;
+COMMIT;
+</Run>
+
+The whole `BEGIN … COMMIT` lives in one runnable block on purpose: the shell doesn't hold a transaction open across separate blocks, so anything that must be one atomic unit goes in a single block.
+
+## Non-repeatable read, side by side
+
+You can't run two live sessions in this shell, so read this scenario. Under the default `READ COMMITTED`, Session 1 reads the same row twice and gets two different answers, because each statement re-snapshots and sees Session 2's commit:
+
+```sql
+-- Session 1 (READ COMMITTED)          -- Session 2
+BEGIN;
+SELECT balance FROM accounts
+  WHERE owner = 'ada';   -- 110
+                                        BEGIN;
+                                        UPDATE accounts SET balance = 200
+                                          WHERE owner = 'ada';
+                                        COMMIT;
+SELECT balance FROM accounts
+  WHERE owner = 'ada';   -- 200  (changed!)
+COMMIT;
+```
+
+Run the same Session 1 under `BEGIN ISOLATION LEVEL REPEATABLE READ;` and both `SELECT`s return `110` — the snapshot is frozen for the whole transaction, so Session 2's commit is invisible until Session 1 ends.
+
+## Serialization failure, side by side
+
+`SERIALIZABLE` catches the anomalies `REPEATABLE READ` still allows — but it can't always let both transactions win. When it detects that committing would break serial equivalence, it aborts one with SQLSTATE `40001` (`serialization_failure`), and **your application must catch that and retry the transaction**:
+
+```sql
+-- Session 1 (SERIALIZABLE)            -- Session 2 (SERIALIZABLE)
+BEGIN ISOLATION LEVEL SERIALIZABLE;    BEGIN ISOLATION LEVEL SERIALIZABLE;
+SELECT sum(balance) FROM accounts;     SELECT sum(balance) FROM accounts;
+UPDATE accounts SET balance = 0
+  WHERE owner = 'ada';
+                                       UPDATE accounts SET balance = 0
+                                         WHERE owner = 'grace';
+COMMIT;
+                                       COMMIT;
+-- ERROR:  could not serialize access
+--   due to read/write dependencies
+--   (SQLSTATE 40001) -> retry
+```
+
+The cost of `SERIALIZABLE` is exactly this: more tracking, and the possibility of retries under contention. Reach for it when correctness across concurrent writers matters more than avoiding the occasional retry; stay on `READ COMMITTED` for ordinary workloads.
+
+## Your turn
+
+Do a real transfer as one atomic unit, at an explicit isolation level, landing on known balances. Move 50 from grace to ada inside a single `REPEATABLE READ` transaction — ada ends at 160 (110 after the earlier +10, plus 50), grace at 50, linus untouched at 100. The transfer moves money within the ledger, so the total is unchanged at 310 (it became 310 back when we credited ada 10):
+
+<Run>
+BEGIN ISOLATION LEVEL REPEATABLE READ;
+UPDATE accounts SET balance = balance + 50 WHERE owner = 'ada';
+UPDATE accounts SET balance = balance - 50 WHERE owner = 'grace';
+COMMIT;
+</Run>
+
+<Run>
+SELECT owner, balance FROM accounts ORDER BY owner;
+</Run>
+
+Because everything happened in one committed transaction, no other session ever saw ada credited without grace debited — the balances only jumped together at `COMMIT`.
+
+<Check id="transfer-committed">
+Run the transfer transaction above. We'll confirm the balances are ada 160, grace 50, linus 100.
+</Check>
+
+## What you learned
+
+- MVCC keeps *multiple versions* of each row: `UPDATE`/`DELETE` write a new version and expire the old one instead of overwriting, so writers don't block readers.
+- The hidden `xmin`/`xmax` columns tag which transaction created and which expired a row version; `txid_current()` shows a transaction's ID.
+- Each transaction reads from a *snapshot* — a consistent point-in-time view that hides in-flight changes.
+- The anomalies — dirty read, non-repeatable read, phantom read, serialization anomaly — are prevented at increasing levels: `READ COMMITTED` (default, per-statement snapshot), `REPEATABLE READ` (one snapshot per transaction), `SERIALIZABLE` (full serial equivalence).
+- Stronger levels cost more; `SERIALIZABLE` can abort with `serialization_failure` (40001), so the app must be ready to retry.
+
+Up next: locking — row and table locks, and SELECT FOR UPDATE.
