@@ -10,4 +10,12 @@ tags:
 authors:
   - exekias
 seed: seed.sql
-checks: []
+checks:
+  - id: status-index-created
+    type: query-returns
+    description: Add the orders(status) index your EXPLAIN plan revealed was missing.
+    sql: "SELECT count(*) FROM pg_indexes WHERE tablename = 'orders' AND indexdef ILIKE '%(status)%'"
+    expect:
+      rowCount: 1
+      rows:
+        - [1]

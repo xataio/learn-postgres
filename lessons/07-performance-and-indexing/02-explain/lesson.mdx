@@ -133,7 +133,7 @@ The plan vocabulary is small once you recognize the players:
 - **Index Only Scan** — answered entirely from the index, no table fetch, because every column needed is in the index.
 - **Bitmap Index Scan + Bitmap Heap Scan** — a middle ground: build a bitmap of matching row locations from the index, then read the table in physical order. Postgres picks this when a query matches *too many* rows for a plain Index Scan (random fetches would hurt) but *too few* to bother reading the whole table.
 
-Force each end of that spectrum. A rare status is selective enough for an index-style plan; the dominant status matches ~85% of the table, so a Seq Scan wins:
+Nothing indexes `status` yet, so both of these run as **Seq Scans** — but watch the `rows=` estimate, which is how the planner tells a rare value from a common one:
 
 <Run>
 EXPLAIN SELECT * FROM orders WHERE status = 'cancelled';
@@ -142,6 +142,8 @@ EXPLAIN SELECT * FROM orders WHERE status = 'cancelled';
 <Run>
 EXPLAIN SELECT * FROM orders WHERE status = 'shipped';
 </Run>
+
+Same plan, very different estimates: `cancelled` is ~4% of the table, `shipped` ~85%. That selectivity gap is exactly what decides whether an index is worth building — a **Bitmap Index Scan** (from the list above) is what Postgres would reach for on the rare value *once an index exists*. You'll make that happen in the capstone.
 
 **Joins** — how two inputs are combined:
 
@@ -188,6 +190,32 @@ A few more options worth knowing:
 EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) SELECT * FROM orders WHERE customer_id = 42;
 </Run>
 
+## Your turn: let a plan drive a fix
+
+You've spent the lesson reading plans — now use one to make a decision. Earlier, `status = 'cancelled'` fell back to a Seq Scan because nothing indexes `status`. Confirm it, this time with real timings:
+
+<Run>
+EXPLAIN ANALYZE SELECT * FROM orders WHERE status = 'cancelled';
+</Run>
+
+A Seq Scan over all 40,000 rows just to keep ~4% of them. The plan named the problem; add the index it's missing:
+
+<Run>
+CREATE INDEX orders_status_idx ON orders (status);
+</Run>
+
+Now read the plan one more time:
+
+<Run>
+EXPLAIN ANALYZE SELECT * FROM orders WHERE status = 'cancelled';
+</Run>
+
+The top node flips to a **Bitmap Index Scan on orders_status_idx** feeding a Bitmap Heap Scan, and the Execution Time drops — Postgres now seeks the ~4% that match instead of reading everything. That's the whole loop this lesson is about: read the plan, spot the Seq Scan, add the fix, and confirm from the new plan that it worked.
+
+<Check id="status-index-created">
+Create the `orders(status)` index above. We'll confirm it exists on your branch — and your re-run `EXPLAIN ANALYZE` should now show a Bitmap Index Scan instead of a Seq Scan.
+</Check>
+
 ## What you learned
 
 - `EXPLAIN` shows the planner's chosen plan *without* running the query; `EXPLAIN (ANALYZE)` runs it for real and reports actual timings and row counts — so never `ANALYZE` a write unless it's wrapped in a transaction you `ROLLBACK`.
@@ -196,5 +224,6 @@ EXPLAIN (ANALYZE, BUFFERS, VERBOSE, FORMAT JSON) SELECT * FROM orders WHERE cust
 - With `ANALYZE`, watch two things: `loops=L` (an inner node's time is *per loop*, so multiply), and estimated-vs-actual `rows` — a big gap means stale statistics, so run `ANALYZE` (or let autovacuum).
 - Recognize the node types: Seq / Index / Index Only / Bitmap scans; Nested Loop / Hash / Merge joins; Sort, Aggregate/HashAggregate, Limit — and why selectivity decides which scan Postgres picks.
 - `EXPLAIN (ANALYZE, BUFFERS)` exposes cache hits vs disk reads; `VERBOSE`, `SETTINGS`, and `FORMAT JSON` add detail when you need it.
+- The payoff loop: read a plan, spot a Seq Scan on an unindexed filter, add the index, and confirm from the new plan (Seq Scan → Bitmap Index Scan) that it worked — EXPLAIN-driven tuning.
 
 Up next: index types beyond B-tree — GIN, GiST, BRIN, and more.
