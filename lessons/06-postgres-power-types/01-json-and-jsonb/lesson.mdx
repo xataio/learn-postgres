@@ -1,0 +1,246 @@
+Relational columns are great until the shape of your data won't sit still. Postgres lets you drop a whole JSON document into a single column and still query *inside* it — no schema migration when a product grows a new attribute. This lesson uses a small `products` catalog where each row carries a nested `attributes` document: a brand, a price, a tags array, and a `specs` object.
+
+<Run>
+SELECT * FROM products;
+</Run>
+
+## `json` vs `jsonb`: almost always jsonb
+
+Postgres has two JSON types, and the difference is how they store the value.
+
+- `json` keeps the **exact input text** — whitespace, key order, and duplicate keys all preserved. Every query re-parses it.
+- `jsonb` stores a **decomposed binary** form. It drops insignificant whitespace, keeps only the last of any duplicate key, doesn't preserve key order, and — crucially — supports indexing and the containment operators.
+
+The seed uses `jsonb`. You can see the normalization by casting a messy literal:
+
+<Run>
+SELECT '\{"b": 1, "a": 2, "a": 3, "b": 1\}'::jsonb;
+</Run>
+
+Keys get reordered, whitespace vanishes, and the duplicate `a` collapses to its last value. `json` would have handed the text back untouched.
+
+Reach for `jsonb` for almost everything you store and query. The one time `json` wins: you need a byte-for-byte record of exactly what was submitted (an audit log of raw payloads), and you never query into it. Otherwise the indexing and operator support make `jsonb` the default.
+
+## Reaching inside: `->`, `->>`, and paths
+
+Two arrow operators pull values out. `->` returns JSON (so you can keep chaining); `->>` returns **text**.
+
+<Run>
+SELECT
+  name,
+  attributes -> 'brand'   AS brand_json,
+  attributes ->> 'brand'  AS brand_text
+FROM products;
+</Run>
+
+`brand_json` comes back quoted (`"Summit"`) because it's still a JSON value; `brand_text` is a plain string you can compare or concatenate. Use `->>` when you want a real Postgres text/number, `->` when you're drilling deeper.
+
+Chain arrows to descend into nested objects, and use an **integer index** to reach into arrays (zero-based):
+
+<Run>
+SELECT
+  name,
+  attributes -> 'specs' ->> 'color'  AS color,
+  attributes -> 'tags'  ->> 0        AS first_tag
+FROM products;
+</Run>
+
+When the path is deep, `#>` and `#>>` take a path array instead of chaining. `#>` returns JSON, `#>>` returns text:
+
+<Run>
+SELECT
+  name,
+  attributes #> '\{specs,color\}'   AS color_json,
+  attributes #>> '\{tags,0\}'        AS first_tag_text
+FROM products;
+</Run>
+
+Because `->>` yields text, cast it to filter numerically. Here, products under 50:
+
+<Run>
+SELECT name, attributes ->> 'price' AS price
+FROM products
+WHERE (attributes ->> 'price')::numeric \< 50;
+</Run>
+
+## Containment and existence
+
+This is where `jsonb` earns its place. `@>` asks "does the left document **contain** the right one?" — a partial match, at any depth.
+
+<Run>
+SELECT name
+FROM products
+WHERE attributes @> '\{"brand": "Summit"\}';
+</Run>
+
+Containment nests. Match on a value buried in `specs`:
+
+<Run>
+SELECT name
+FROM products
+WHERE attributes @> '\{"specs": \{"color": "green"\}\}';
+</Run>
+
+And an array on the right means "contains all of these elements":
+
+<Run>
+SELECT name
+FROM products
+WHERE attributes @> '\{"tags": ["outdoor"]\}';
+</Run>
+
+The existence operators check for **keys** (or, on an array, string elements) rather than values:
+
+- `?` — does this key exist?
+- `?|` — does *any* key in this list exist?
+- `?&` — do *all* keys in this list exist?
+
+<Run>
+SELECT name, attributes -> 'tags' AS tags
+FROM products
+WHERE attributes -> 'tags' ? 'sale';
+</Run>
+
+<Run>
+SELECT name
+FROM products
+WHERE attributes -> 'specs' ?& array['color', 'weight_g'];
+</Run>
+
+`@>`, `?`, `?|`, and `?&` are exactly the operators a **GIN index** on a jsonb column accelerates — more on that at the end.
+
+## JSONPath: querying with a mini-language
+
+Postgres 12 added SQL/JSONPath, a compact language for navigating and filtering JSON. `jsonb_path_query` returns every match; the `$` is the document root, and `?( … )` is a filter.
+
+<Run>
+SELECT name, jsonb_path_query(attributes, '$.tags[*]') AS tag
+FROM products
+WHERE name = 'Trailhead Backpack';
+</Run>
+
+Filters let you express conditions inside the path itself. Find products whose `specs.weight_g` exceeds 400:
+
+<Run>
+SELECT name
+FROM products
+WHERE jsonb_path_exists(attributes, '$.specs.weight_g ? (@ > 400)');
+</Run>
+
+The `@?` operator is shorthand for `jsonb_path_exists`, and `@@` evaluates a JSONPath *predicate* to a boolean. Both are handy in a `WHERE` clause:
+
+<Run>
+SELECT name
+FROM products
+WHERE attributes @? '$.tags[*] ? (@ == "footwear")';
+</Run>
+
+<Run>
+SELECT name
+FROM products
+WHERE attributes @@ '$.price \< 50';
+</Run>
+
+## Modifying jsonb
+
+JSON columns aren't read-only. Because `jsonb` is immutable, each of these produces a *new* document that you assign back with `UPDATE`.
+
+`jsonb_set(target, path, new_value)` replaces (or adds) the value at a path. Give the desk lamp more watts:
+
+<Run>
+SELECT jsonb_set(attributes, '\{specs,watts\}', '11')
+FROM products
+WHERE name = 'Desk Lamp';
+</Run>
+
+Concatenation `||` merges two documents — new keys are added, existing keys overwritten. It's the easiest way to add or update a top-level key:
+
+<Run>
+SELECT attributes || '\{"featured": true\}'::jsonb
+FROM products
+WHERE name = 'Desk Lamp';
+</Run>
+
+The `-` operator deletes a key, and `#-` deletes at a path:
+
+<Run>
+SELECT
+  attributes - 'in_stock'          AS without_stock,
+  attributes #- '\{specs,color\}'   AS without_color
+FROM products
+WHERE name = 'Desk Lamp';
+</Run>
+
+## Expanding and building
+
+`jsonb` documents can be exploded into rows. `jsonb_array_elements` turns an array into one row per element (`_text` gives text instead of jsonb); `jsonb_each` splits an object into key/value rows; `jsonb_object_keys` lists just the keys.
+
+<Run>
+SELECT name, tag
+FROM products, jsonb_array_elements_text(attributes -> 'tags') AS tag
+WHERE name = 'Trailhead Backpack';
+</Run>
+
+<Run>
+SELECT key, value
+FROM products, jsonb_each(attributes -> 'specs')
+WHERE name = 'Trail Runner Shoe';
+</Run>
+
+Going the other way, you can *construct* jsonb. `jsonb_build_object` assembles a document from alternating keys and values, `to_jsonb` converts any value, and `jsonb_agg` rolls a set of rows into a single JSON array — the mirror image of expanding.
+
+<Run>
+SELECT jsonb_agg(jsonb_build_object('name', name, 'price', attributes -> 'price')) AS catalog
+FROM products;
+</Run>
+
+`row_to_json` is a quick way to turn a whole row into JSON when you don't want to name every field:
+
+<Run>
+SELECT row_to_json(t) AS product_row
+FROM (SELECT name, attributes -> 'brand' AS brand FROM products) AS t
+WHERE t.name = 'Field Notebook';
+</Run>
+
+## A word on indexing
+
+Every containment or existence query above scanned all four rows — fine here, painful over millions. A **GIN index** on a jsonb column makes `@>`, `?`, `?|`, and `?&` fast by indexing the keys and values inside the document:
+
+```sql
+CREATE INDEX idx_products_attributes ON products USING gin (attributes);
+```
+
+The arrow operators (`->`, `->>`) don't benefit from a plain GIN index — those are for extracting, not searching. We'll dig into GIN and the other index types in the performance module; for now, just know a jsonb column can be indexed like any other.
+
+## Your turn
+
+Put the backpack on sale by adding a top-level `on_sale` boolean set to `true`, then confirm it reads back. Either `jsonb_set` or `||` works — try it before peeking:
+
+<Run>
+UPDATE products
+SET attributes = jsonb_set(attributes, '\{on_sale\}', 'true')
+WHERE name = 'Trailhead Backpack';
+</Run>
+
+Read it back — `->` returns the JSON boolean:
+
+<Run>
+SELECT attributes -> 'on_sale' AS on_sale
+FROM products
+WHERE name = 'Trailhead Backpack';
+</Run>
+
+<Check id="backpack-on-sale-flag">
+Add `on_sale: true` to the Trailhead Backpack's `attributes`. We'll confirm the key reads back as `true`.
+</Check>
+
+## What you learned
+
+- `jsonb` stores a normalized binary document (dedups keys, drops whitespace, reorders keys) and supports indexing and containment; `json` preserves the raw text. Default to `jsonb` unless you need a verbatim copy you'll never query.
+- `->` returns JSON (chainable), `->>` returns text; integer indexes reach into arrays, and `#>` / `#>>` take a path array for deep access.
+- `@>` tests containment at any depth; `?`, `?|`, `?&` test for keys — and these four are what a GIN index accelerates.
+- SQL/JSONPath (`jsonb_path_query`, `jsonb_path_exists`, `@?`, `@@`) filters and navigates documents with a compact `$.path ? (@ …)` syntax.
+- Modify with `jsonb_set` and `||` (add/replace), `-` (delete key) and `#-` (delete at path) — each returns a new document to assign back.
+- Expand with `jsonb_array_elements`, `jsonb_each`, `jsonb_object_keys`; build with `jsonb_build_object`, `to_jsonb`, `jsonb_agg`, and `row_to_json`.
+
+Up next: arrays — Postgres's first-class array type.
