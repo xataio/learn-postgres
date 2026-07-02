@@ -1,0 +1,19 @@
+title: Full-text search
+summary: Search prose the right way — lexemes and stemming with to_tsvector, matching with tsquery, ranking, highlighting, and a generated tsvector column backed by a GIN index.
+estimatedMinutes: 15
+tags:
+  - full-text-search
+  - tsvector
+  - tsquery
+  - ts-rank
+  - gin
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: articles-search-column
+    type: schema-state
+    description: Add a STORED generated tsvector column named search to the articles table.
+    table: articles
+    column: search
+    columnType: tsvector
