@@ -1,0 +1,21 @@
+title: Arrays
+summary: Store many values in one column — declaring array columns, 1-based indexing, unnest, and the containment and overlap operators that power tag queries.
+estimatedMinutes: 13
+tags:
+  - arrays
+  - unnest
+  - array-agg
+  - containment
+  - any
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: hello-tagged
+    type: query-returns
+    description: Append the 'welcome' tag to the "Hello, world" article.
+    sql: SELECT tags FROM articles WHERE title = 'Hello, world'
+    expect:
+      rowCount: 1
+      rows:
+        - [["welcome"]]

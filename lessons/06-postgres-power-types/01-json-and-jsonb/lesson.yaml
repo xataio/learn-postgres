@@ -1,0 +1,21 @@
+title: JSON and JSONB
+summary: Store, query, and reshape JSON in Postgres with jsonb — access operators, containment, JSONPath, and in-place edits.
+estimatedMinutes: 15
+tags:
+  - json
+  - jsonb
+  - jsonpath
+  - containment
+  - gin
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: backpack-on-sale-flag
+    type: query-returns
+    description: Add an on_sale boolean to the backpack's attributes and confirm it reads back as true.
+    sql: SELECT attributes -> 'on_sale' FROM products WHERE name = 'Trailhead Backpack'
+    expect:
+      rowCount: 1
+      rows:
+        - [true]

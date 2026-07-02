@@ -1,0 +1,22 @@
+title: "Window functions: advanced"
+summary: Running totals, LAG/LEAD, FIRST_VALUE/LAST_VALUE, and the window frames that make them behave.
+estimatedMinutes: 14
+tags:
+  - window-functions
+  - running-total
+  - lag-lead
+  - frames
+  - moving-average
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: biggest-jump-saved
+    type: query-returns
+    description: Save each region's biggest single-day jump into a biggest_jump table.
+    sql: SELECT region, day, delta FROM biggest_jump ORDER BY region
+    expect:
+      rowCount: 2
+      rows:
+        - [north, "2024-01-06", 230]
+        - [south, "2024-01-06", 230]

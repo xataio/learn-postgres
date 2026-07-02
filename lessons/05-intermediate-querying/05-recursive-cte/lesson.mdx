@@ -1,0 +1,214 @@
+A regular CTE names a step. A **recursive** CTE names a step that refers to *itself*, so it can build a result from its own previous output — one iteration at a time. That's what you need to walk something whose depth you don't know in advance: a number series, an org chart, a graph. This is the tool the CTE lesson promised for later.
+
+The seed is a company org chart. `employees` is *self-referencing* — each row's `manager_id` points at another employee's `id`, and the CEO's is `NULL`. That single column encodes an entire tree.
+
+<Run>
+SELECT id, name, title, manager_id FROM employees ORDER BY id;
+</Run>
+
+## The shape of a recursive CTE
+
+Every recursive CTE has the same skeleton — two queries glued by `UNION`:
+
+```sql
+WITH RECURSIVE walk AS (
+  -- anchor: runs once, seeds the result
+  SELECT ...
+  UNION ALL
+  -- recursive term: re-runs against the PREVIOUS iteration's rows
+  SELECT ... FROM walk JOIN ...
+)
+SELECT * FROM walk;
+```
+
+The mental model:
+
+1. The **anchor** runs once and its rows become iteration 0.
+2. The **recursive term** runs, but the `walk` inside it means *only the rows the last iteration produced* — not the whole accumulated result.
+3. Step 2 repeats. Each pass feeds on the rows from the pass before it.
+4. When an iteration produces **zero rows**, it stops. Everything produced along the way is the final result.
+
+That "until it returns no rows" is the whole engine. Get the recursive term to eventually return nothing, and the loop ends.
+
+## Warm-up: a number series
+
+The clearest way to feel the mechanics is a CTE with no table at all. Count 1 to 5:
+
+<Run>
+WITH RECURSIVE nums AS (
+  SELECT 1 AS n
+  UNION ALL
+  SELECT n + 1 FROM nums WHERE n \< 5
+)
+SELECT n FROM nums;
+</Run>
+
+Trace it: the anchor emits `1`. The recursive term takes that row and emits `2`. Then `2` produces `3`, and so on. When `n` is `5`, the `WHERE n \< 5` filters everything out — zero rows — and it halts. The `WHERE` is the stop condition; drop it and this runs forever.
+
+In real code you would just write `generate_series(1, 5)` — it's shorter and faster, and the same goes for date ranges with `generate_series('2024-01-01'::date, '2024-01-05', '1 day')`. Recursion earns its keep when the *next* row depends on data, not on a fixed step. That's a hierarchy.
+
+## Walking down: the reporting chain
+
+Now the real job. Start at the CEO and walk *down* the tree, gathering everyone beneath them. The anchor picks the root (`manager_id IS NULL`); the recursive term joins the table to the rows we've already found, pulling in each person whose manager is one of them:
+
+<Run>
+WITH RECURSIVE org AS (
+  SELECT id, name, title, manager_id, 1 AS level
+  FROM employees
+  WHERE manager_id IS NULL
+  UNION ALL
+  SELECT e.id, e.name, e.title, e.manager_id, org.level + 1
+  FROM employees e
+  JOIN org ON e.manager_id = org.id
+)
+SELECT level, name, title FROM org ORDER BY level, name;
+</Run>
+
+`level` is the trick for tracking depth: the anchor hard-codes it to `1`, and every recursive step adds one. Iteration 0 is the CEO (level 1), iteration 1 is their direct reports (level 2), and so on down to the individual contributors. The join `e.manager_id = org.id` is what "descend one level" means in SQL.
+
+## An indented org chart
+
+Because we carry `level`, we can render the tree visually. `repeat('  ', level - 1)` indents each row by its depth, so the output *looks* like an org chart:
+
+<Run>
+WITH RECURSIVE org AS (
+  SELECT id, name, title, manager_id, 1 AS level
+  FROM employees
+  WHERE manager_id IS NULL
+  UNION ALL
+  SELECT e.id, e.name, e.title, e.manager_id, org.level + 1
+  FROM employees e
+  JOIN org ON e.manager_id = org.id
+)
+SELECT repeat('    ', level - 1) || name AS chart, title
+FROM org
+ORDER BY level, name;
+</Run>
+
+Ordering by `level` keeps managers above their reports. (A perfectly nested display needs the path — coming up next — as the sort key, but level-then-name is plenty readable here.)
+
+## Building a path array
+
+Depth is one accumulator; a **path** is another. Carry an array and append the current node on every step, and each row ends up knowing its full ancestry from the root. `ARRAY[name]` seeds it at the anchor; `org.path || e.name` extends it:
+
+<Run>
+WITH RECURSIVE org AS (
+  SELECT id, name, manager_id, ARRAY[name] AS path
+  FROM employees
+  WHERE manager_id IS NULL
+  UNION ALL
+  SELECT e.id, e.name, e.manager_id, org.path || e.name
+  FROM employees e
+  JOIN org ON e.manager_id = org.id
+)
+SELECT array_length(path, 1) AS depth,
+       array_to_string(path, ' > ') AS chain
+FROM org
+ORDER BY path;
+</Run>
+
+Two things fall out for free. `array_length(path, 1)` is the depth (same number `level` gave us, derived a different way). And `ORDER BY path` now sorts the tree in true top-down, depth-first order — each manager immediately followed by their subtree — because arrays sort element by element. The path isn't just pretty output; it's also, as we'll see, a cycle guard.
+
+## Walking up: employee to CEO
+
+Recursion has no built-in direction — it follows whatever join you write. Flip the join condition and you climb *up* the tree instead. Start at one employee and follow `manager_id` toward the root to reconstruct their management chain:
+
+<Run>
+WITH RECURSIVE chain AS (
+  SELECT id, name, title, manager_id, 1 AS depth
+  FROM employees
+  WHERE name = 'Edsger'
+  UNION ALL
+  SELECT e.id, e.name, e.title, e.manager_id, chain.depth + 1
+  FROM employees e
+  JOIN chain ON e.id = chain.manager_id
+)
+SELECT depth, name, title FROM chain ORDER BY depth;
+</Run>
+
+Here the anchor is a single leaf, and each step joins the *manager's* row (`e.id = chain.manager_id`). The walk climbs Edsger to Katherine to Margaret to Grace to Ada, and stops when it reaches the CEO — whose `manager_id` is `NULL`, so the next join finds nothing and returns zero rows. Same skeleton, opposite direction, just by swapping which side of the join is the known row.
+
+## Cycles: why an unguarded walk loops forever
+
+A tree can't loop — every node has exactly one parent and the root has none, so you always run out of rows. A **graph** offers no such guarantee. The seed's `edges` table is a directed graph, and it has a cycle: `A -> B -> C -> A`.
+
+<Run>
+SELECT src, dst FROM edges ORDER BY src, dst;
+</Run>
+
+Try to walk it naively from `A` and the recursive term would ride `A -> B -> C -> A -> B -> C -> ...` and never return zero rows — an infinite loop. The fix is the same path array we built for the org chart: carry the nodes you've visited, and refuse to step onto one you've already seen.
+
+<Run>
+WITH RECURSIVE reachable AS (
+  SELECT src, dst, ARRAY[src, dst] AS path
+  FROM edges
+  WHERE src = 'A'
+  UNION ALL
+  SELECT e.src, e.dst, r.path || e.dst
+  FROM edges e
+  JOIN reachable r ON e.src = r.dst
+  WHERE NOT e.dst = ANY(r.path)
+)
+SELECT array_to_string(path, ' -> ') AS route FROM reachable ORDER BY path;
+</Run>
+
+`WHERE NOT e.dst = ANY(r.path)` is the guard: before following an edge, check that its destination isn't already on our path. When the walk reaches `C` and its only exit is back to `A` — already visited — the guard rejects it, that branch produces no new rows, and the recursion terminates cleanly.
+
+## `UNION` vs `UNION ALL`
+
+Note we used `UNION ALL` everywhere. In a tree it doesn't matter — no node is reachable twice, so there are no duplicates to remove. In a graph it can matter: plain `UNION` deduplicates rows each iteration, which trims *identical* rows but does **not** save you from cycles, because the accumulating path makes each visit a distinct row. Always guard cycles explicitly with a visited-path check; reach for `UNION` (over `UNION ALL`) only when you actually want duplicate *rows* collapsed.
+
+Postgres 14+ also offers a built-in `CYCLE` clause that automates the visited-path bookkeeping:
+
+```sql
+WITH RECURSIVE reachable AS (
+  SELECT src, dst FROM edges WHERE src = 'A'
+  UNION ALL
+  SELECT e.src, e.dst FROM edges e JOIN reachable r ON e.src = r.dst
+) CYCLE dst SET is_cycle USING trail
+SELECT * FROM reachable;
+```
+
+It maintains the `trail` array and an `is_cycle` flag for you, stopping when a node repeats. The manual `= ANY(path)` guard above is worth understanding first — `CYCLE` is just doing the same thing under the hood.
+
+## Your turn
+
+You've walked *down* from the CEO and *up* from a leaf — now do a **subtree**. Start at one manager and gather their entire org beneath them: build the reporting subtree rooted at Grace, every employee under her plus Grace herself, with each person's depth *relative to Grace* (Grace is `1`). Save it as a table called `grace_team` (`CREATE TABLE … AS` stores any query's result). It's the walk-down query with a different anchor — try it before peeking:
+
+<Run>
+CREATE TABLE grace_team AS
+WITH RECURSIVE team AS (
+  SELECT id, name, manager_id, 1 AS depth
+  FROM employees
+  WHERE name = 'Grace'
+  UNION ALL
+  SELECT e.id, e.name, e.manager_id, team.depth + 1
+  FROM employees e
+  JOIN team ON e.manager_id = team.id
+)
+SELECT name, depth FROM team;
+</Run>
+
+See who landed on Grace's team:
+
+<Run>
+SELECT name, depth FROM grace_team ORDER BY depth, name;
+</Run>
+
+Seven people: Grace at depth 1, her two managers at depth 2, and their engineers below. Swapping the anchor from `manager_id IS NULL` to `name = 'Grace'` is all it takes to re-root the walk anywhere in the tree.
+
+<Check id="grace-team-saved">
+Create the `grace_team` table with the query above. We'll confirm it holds Grace's seven-person subtree with the right depth on each row.
+</Check>
+
+## What you learned
+
+- A recursive CTE is `WITH RECURSIVE name AS (anchor UNION [ALL] recursive-term) SELECT …`: the anchor runs once, then the recursive term re-runs against the *previous* iteration's rows until one iteration returns no rows.
+- The termination condition lives in the recursive term (a `WHERE`, or simply running out of matching rows). Without one, it loops forever.
+- Generating a fixed series is a teaching case — `generate_series` is the practical tool. Recursion pays off when the next row depends on data, like a hierarchy.
+- Walk a self-referencing table down (join child to parent) or up (join parent to child) by flipping the join; track depth with a `level + 1` counter.
+- Carry an array with `path || node` to record ancestry — it gives you depth, a printable chain, and a depth-first sort order via `ORDER BY path`.
+- Graphs can cycle. Guard with `WHERE NOT node = ANY(path)`, or use the Postgres 14+ `CYCLE` clause; plain `UNION` dedupes rows but does *not* prevent cycles.
+- The anchor decides where the walk starts: swap `manager_id IS NULL` for `name = 'Grace'` to re-root at any subtree, and wrap the whole thing in `CREATE TABLE … AS` to store the result.
+
+Up next: Module 6 — Postgres power types, starting with JSON and JSONB.
