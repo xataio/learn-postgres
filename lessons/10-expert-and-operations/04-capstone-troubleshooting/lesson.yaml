@@ -1,0 +1,21 @@
+title: "Capstone: troubleshooting a slow query"
+summary: Diagnose a slow query end to end — measure with EXPLAIN ANALYZE, read the plan, add the right index, and confirm it flipped.
+estimatedMinutes: 15
+tags:
+  - explain-analyze
+  - indexes
+  - query-tuning
+  - performance
+  - capstone
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: orders-customer-index-added
+    type: query-returns
+    description: Add the index that serves the customer filter and the created_at ordering.
+    sql: SELECT count(*) FROM pg_indexes WHERE tablename = 'orders' AND indexdef ILIKE '%(customer_id%'
+    expect:
+      rowCount: 1
+      rows:
+        - [1]
