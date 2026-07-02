@@ -1,0 +1,3 @@
+title: Expert and operations
+difficulty: advanced
+summary: Operate Postgres with confidence — roles and row-level security, vacuum and bloat, extensions, and troubleshooting.
