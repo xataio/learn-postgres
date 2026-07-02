@@ -10,4 +10,18 @@ tags:
 authors:
   - exekias
 seed: seed.sql
-checks: []
+checks:
+  - id: grace-team-saved
+    type: query-returns
+    description: Save Grace's reporting subtree (with depth) into a grace_team table.
+    sql: SELECT name, depth FROM grace_team ORDER BY depth, name
+    expect:
+      rowCount: 7
+      rows:
+        - [Grace, 1]
+        - [Dennis, 2]
+        - [Margaret, 2]
+        - [Alan, 3]
+        - [Barbara, 3]
+        - [Katherine, 3]
+        - [Edsger, 4]

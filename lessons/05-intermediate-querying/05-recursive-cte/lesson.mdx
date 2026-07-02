@@ -171,6 +171,36 @@ SELECT * FROM reachable;
 
 It maintains the `trail` array and an `is_cycle` flag for you, stopping when a node repeats. The manual `= ANY(path)` guard above is worth understanding first — `CYCLE` is just doing the same thing under the hood.
 
+## Your turn
+
+You've walked *down* from the CEO and *up* from a leaf — now do a **subtree**. Start at one manager and gather their entire org beneath them: build the reporting subtree rooted at Grace, every employee under her plus Grace herself, with each person's depth *relative to Grace* (Grace is `1`). Save it as a table called `grace_team` (`CREATE TABLE … AS` stores any query's result). It's the walk-down query with a different anchor — try it before peeking:
+
+<Run>
+CREATE TABLE grace_team AS
+WITH RECURSIVE team AS (
+  SELECT id, name, manager_id, 1 AS depth
+  FROM employees
+  WHERE name = 'Grace'
+  UNION ALL
+  SELECT e.id, e.name, e.manager_id, team.depth + 1
+  FROM employees e
+  JOIN team ON e.manager_id = team.id
+)
+SELECT name, depth FROM team;
+</Run>
+
+See who landed on Grace's team:
+
+<Run>
+SELECT name, depth FROM grace_team ORDER BY depth, name;
+</Run>
+
+Seven people: Grace at depth 1, her two managers at depth 2, and their engineers below. Swapping the anchor from `manager_id IS NULL` to `name = 'Grace'` is all it takes to re-root the walk anywhere in the tree.
+
+<Check id="grace-team-saved">
+Create the `grace_team` table with the query above. We'll confirm it holds Grace's seven-person subtree with the right depth on each row.
+</Check>
+
 ## What you learned
 
 - A recursive CTE is `WITH RECURSIVE name AS (anchor UNION [ALL] recursive-term) SELECT …`: the anchor runs once, then the recursive term re-runs against the *previous* iteration's rows until one iteration returns no rows.
@@ -179,5 +209,6 @@ It maintains the `trail` array and an `is_cycle` flag for you, stopping when a n
 - Walk a self-referencing table down (join child to parent) or up (join parent to child) by flipping the join; track depth with a `level + 1` counter.
 - Carry an array with `path || node` to record ancestry — it gives you depth, a printable chain, and a depth-first sort order via `ORDER BY path`.
 - Graphs can cycle. Guard with `WHERE NOT node = ANY(path)`, or use the Postgres 14+ `CYCLE` clause; plain `UNION` dedupes rows but does *not* prevent cycles.
+- The anchor decides where the walk starts: swap `manager_id IS NULL` for `name = 'Grace'` to re-root at any subtree, and wrap the whole thing in `CREATE TABLE … AS` to store the result.
 
 Up next: Module 6 — Postgres power types, starting with JSON and JSONB.
