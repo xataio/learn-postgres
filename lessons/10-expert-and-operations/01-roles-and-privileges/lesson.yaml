@@ -1,0 +1,20 @@
+title: Roles and privileges
+summary: "Postgres has one concept for users and groups — roles — and two ways to control access: GRANT/REVOKE on objects and row-level security policies."
+estimatedMinutes: 15
+tags:
+  - roles
+  - privileges
+  - grant
+  - row-level-security
+  - rls
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: rls-enabled
+    type: query-returns
+    description: Enable row-level security on documents and add an owner-based policy.
+    sql: SELECT relrowsecurity FROM pg_class WHERE relname = 'documents'
+    expect:
+      rowCount: 1
+      rows: [[true]]

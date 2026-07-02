@@ -1,0 +1,149 @@
+Postgres has no separate notion of "users" and "groups" — there is one thing, a **role**, and access control is built entirely out of granting privileges to roles. This lesson covers the two layers: table- and schema-level privileges with `GRANT`/`REVOKE`, and row-level security, where a policy decides which *rows* each role may see.
+
+The seed is a shared document store: a `documents` table where each row has an `owner` (a role name). Two people, alice and bob, keep their notes in the same table.
+
+<Run>
+SELECT * FROM documents ORDER BY id;
+</Run>
+
+## Roles are users and groups at once
+
+A role is just a named grantee. Give it `LOGIN` and it can connect — that's what we informally call a "user." Leave `LOGIN` off and it's effectively a "group": nobody logs in as it, but you can grant privileges to it and then grant *membership* in it to other roles. Same object, different use.
+
+Creating and wiring up roles needs the `CREATEROLE` attribute (or superuser), which your sandbox role doesn't have — so these are read-only snippets, not runnable blocks:
+
+```sql
+-- A login role (a "user") and a group role (no LOGIN)
+CREATE ROLE alice LOGIN PASSWORD 'secret';
+CREATE ROLE analysts;
+
+-- Membership: alice now inherits everything granted to analysts
+GRANT analysts TO alice;
+```
+
+Grant a privilege to `analysts` and every member gets it — that's how you manage access by team instead of per person. One special role, `PUBLIC`, means *every role, present and future*. Granting to `PUBLIC` is convenient and dangerous: it's the usual reason a table is readable by accounts you forgot existed.
+
+## Object privileges: GRANT and REVOKE
+
+Privileges on a table are handed out with `GRANT` and taken back with `REVOKE`. You can do this on tables **you own** without any special attribute, so these run. Grant `PUBLIC` read and write, then immediately think better of the write:
+
+<Run>
+GRANT SELECT, INSERT ON documents TO PUBLIC;
+</Run>
+
+<Run>
+REVOKE INSERT ON documents FROM PUBLIC;
+</Run>
+
+The lesson here is **least privilege**: grant the narrowest set that gets the job done, and prefer granting to a group role over `PUBLIC`. Every extra privilege is a path an attacker or a buggy app can take.
+
+Table grants aren't the whole story. To touch anything in a schema, a role also needs privileges on the *schema*:
+
+```sql
+GRANT USAGE  ON SCHEMA app TO analysts;   -- may reference objects inside
+GRANT CREATE ON SCHEMA app TO deployer;   -- may create new objects inside
+```
+
+`USAGE` is the "you may look inside this schema" key; `CREATE` lets a role add tables of its own. A role with `SELECT` on a table but no `USAGE` on its schema still can't read it.
+
+New tables don't inherit anyone's grants — a freshly created table is private to its owner. If you want a group to see everything created *from now on*, set a default with `ALTER DEFAULT PRIVILEGES`:
+
+<Run>
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO PUBLIC;
+</Run>
+
+That only affects tables created *after* the statement, and only ones created by the role that ran it — it's a rule for the future, not a retroactive grant.
+
+## Row-level security: privileges on rows
+
+`GRANT` decides who may touch a table. **Row-level security (RLS)** decides *which rows* they see once they're in. You enable it on the table, then attach one or more policies:
+
+<Run>
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+</Run>
+
+The moment RLS is on, the default is *deny*: with no policy, non-owners see zero rows. A policy pokes holes in that wall. There's a catch, though — the **table owner bypasses RLS entirely** by default. Since you own `documents`, you'd still see every row, which makes the feature impossible to feel. `FORCE ROW LEVEL SECURITY` makes the owner obey policies too:
+
+<Run>
+ALTER TABLE documents FORCE ROW LEVEL SECURITY;
+</Run>
+
+## USING vs WITH CHECK
+
+A policy has two halves. `USING` is the **visibility** filter — it's applied to existing rows for `SELECT`/`UPDATE`/`DELETE`, and any row failing it simply isn't there. `WITH CHECK` is the **write** filter — it's applied to the new row an `INSERT` or `UPDATE` produces, and a failing row is rejected with an error. Roughly: `USING` controls what you can read, `WITH CHECK` controls what you can write.
+
+In production the policy keys off `current_user`, so each connected role sees its own rows:
+
+```sql
+CREATE POLICY owner_can_see ON documents
+  USING (owner = current_user)
+  WITH CHECK (owner = current_user);
+```
+
+Your sandbox has just one role, so `current_user` never changes — you couldn't watch it filter. Instead we'll key the policy off a session variable *you* can set, standing in for "who am I right now":
+
+<Run>
+CREATE POLICY owner_can_see ON documents
+  USING (owner = current_setting('app.owner', true))
+  WITH CHECK (owner = current_setting('app.owner', true));
+</Run>
+
+Now become alice and look — the wall lets exactly her rows through:
+
+<Run>
+SET app.owner = 'alice';
+SELECT id, owner, title FROM documents ORDER BY id;
+</Run>
+
+Three rows, all alice's. Switch to bob and the same query returns a different world:
+
+<Run>
+SET app.owner = 'bob';
+SELECT id, owner, title FROM documents ORDER BY id;
+</Run>
+
+That's `USING` at work — one table, one query, per-role results. Now `WITH CHECK`: still acting as bob, try to plant a row owned by alice. This one is *supposed to fail* — the write filter rejects it because the new row's owner isn't bob:
+
+<Run>
+INSERT INTO documents (owner, title) VALUES ('alice', 'sneaky');
+</Run>
+
+Postgres refuses: *new row violates row-level security policy*. A row bob may not read is also a row bob may not create. Insert one he's allowed to, and it goes through:
+
+<Run>
+INSERT INTO documents (owner, title) VALUES ('bob', 'Retro notes');
+</Run>
+
+## Your turn
+
+You've already done the exercise above — but make sure the final state is in place, because that's what we'll verify. `documents` should have row-level security **enabled** and carry an owner-scoped policy. If you ran the blocks in order, both are done; if not, run these:
+
+<Run>
+ALTER TABLE documents ENABLE ROW LEVEL SECURITY;
+</Run>
+
+<Run>
+CREATE POLICY owner_can_see ON documents
+  USING (owner = current_setting('app.owner', true))
+  WITH CHECK (owner = current_setting('app.owner', true));
+</Run>
+
+Confirm the flag is set — this is the check:
+
+<Run>
+SELECT relrowsecurity FROM pg_class WHERE relname = 'documents';
+</Run>
+
+<Check id="rls-enabled">
+Enable row-level security on `documents` and add an owner-based policy. We'll confirm `relrowsecurity` is `true`.
+</Check>
+
+## What you learned
+
+- A **role** is Postgres's single concept for both users (with `LOGIN`) and groups (membership granted with `GRANT role TO role`); `PUBLIC` is every role at once, so grant to it sparingly.
+- **Object privileges** are handed out with `GRANT` and pulled back with `REVOKE`; reaching into a schema also needs `USAGE` (look inside) or `CREATE` (add objects). Follow least privilege and lean on group roles.
+- `ALTER DEFAULT PRIVILEGES` sets grants for tables created *later* — it's a rule for the future, not retroactive.
+- **Row-level security** filters rows: `ENABLE ROW LEVEL SECURITY` flips to deny-by-default, then a `CREATE POLICY` grants access. `USING` controls visibility (reads), `WITH CHECK` controls writes.
+- The table **owner bypasses RLS** unless you add `FORCE ROW LEVEL SECURITY`.
+
+Up next: vacuum and bloat — keeping MVCC tidy.
