@@ -1,0 +1,147 @@
+Some tables only ever grow: sensor readings, log lines, orders. Left as one giant heap, deleting last year's rows means a slow `DELETE` that leaves bloat behind, and every query scans the whole thing. *Partitioning* splits one logical table into physical children — each holding a slice of the rows — so old data can be dropped instantly and queries touch only the slices they need.
+
+The seed already built one: a `measurements` table partitioned by month, with three monthly children holding 4,368 sensor readings between them.
+
+<Run>
+SELECT count(*) FROM measurements;
+</Run>
+
+## The parent routes rows to children
+
+`measurements` was created with a partitioning strategy, and each child claims a range of `recorded_at`:
+
+```sql
+CREATE TABLE measurements (
+  id          bigint GENERATED ALWAYS AS IDENTITY,
+  sensor_id   int         NOT NULL,
+  recorded_at timestamptz NOT NULL,
+  reading     numeric(6,2) NOT NULL,
+  PRIMARY KEY (id, recorded_at)
+) PARTITION BY RANGE (recorded_at);
+
+CREATE TABLE measurements_2024_01 PARTITION OF measurements
+  FOR VALUES FROM ('2024-01-01') TO ('2024-02-01');
+```
+
+You insert into the *parent*, and Postgres routes each row to the child whose range contains its `recorded_at`. The three children carry the rows; the parent holds none of its own. Ask each child directly:
+
+<Run>
+SELECT 'jan' AS part, count(\*) FROM measurements_2024_01
+UNION ALL SELECT 'feb', count(\*) FROM measurements_2024_02
+UNION ALL SELECT 'mar', count(\*) FROM measurements_2024_03;
+</Run>
+
+1,488 + 1,392 + 1,488 = 4,368 — every parent row physically lives in exactly one child.
+
+One catch of RANGE partitioning: a row whose `recorded_at` falls outside every child's range has nowhere to go and the `INSERT` errors. Try an April row (there is no April partition yet), and watch it fail:
+
+<Run>
+INSERT INTO measurements (sensor_id, recorded_at, reading)
+VALUES (1, '2024-04-15 09:00:00', 21.5);
+</Run>
+
+*no partition of relation "measurements" found for row* — we'll fix that below.
+
+## Partition pruning: scan only what matters
+
+The payoff is on reads. Filter on the partition key and Postgres skips children that can't match — *partition pruning*. `EXPLAIN` shows exactly which children the planner kept:
+
+<Run>
+EXPLAIN
+SELECT count(*) FROM measurements
+WHERE recorded_at >= '2024-02-01' AND recorded_at \< '2024-03-01';
+</Run>
+
+Only `measurements_2024_02` appears in the plan — January and March were pruned away before a single row was read. Now drop the filter and the planner has to keep them all:
+
+<Run>
+EXPLAIN
+SELECT count(*) FROM measurements;
+</Run>
+
+All three children show up. That difference is the whole point: on a table with three years of monthly partitions, a one-month query reads 1 partition instead of 36. Pruning works whenever the filter references the partition key.
+
+## Indexes propagate from the parent
+
+Create an index on the *parent* and Postgres creates a matching one on every current child — and on any child you add later. One statement, all partitions covered:
+
+<Run>
+CREATE INDEX ON measurements (sensor_id);
+</Run>
+
+<Run>
+SELECT indexrelid::regclass AS index_name, indrelid::regclass AS on_table
+FROM pg_index
+WHERE indrelid IN ('measurements_2024_01'::regclass, 'measurements_2024_02'::regclass, 'measurements_2024_03'::regclass)
+ORDER BY on_table;
+</Run>
+
+Each child got its own `sensor_id` index automatically. Combined with pruning, a query like "sensor 3 in February" narrows to one partition and then uses that partition's index.
+
+## Archiving is instant
+
+Here is the operational win. To retire January, you don't run a `DELETE` over millions of rows — you drop or detach the whole child in one metadata operation:
+
+```sql
+DROP TABLE measurements_2024_01;              -- gone, no bloat, no VACUUM
+ALTER TABLE measurements DETACH PARTITION measurements_2024_01;  -- keep it, unlink it
+```
+
+`DROP TABLE` reclaims the space immediately; `DETACH` turns the child into an ordinary standalone table you can archive or move elsewhere. Both beat a bulk `DELETE`, which would leave dead tuples for `VACUUM` to clean up.
+
+## Other partitioning strategies
+
+RANGE isn't the only option. When rows fall into discrete categories rather than ordered ranges, use LIST:
+
+```sql
+CREATE TABLE events (region text, payload jsonb) PARTITION BY LIST (region);
+CREATE TABLE events_eu PARTITION OF events FOR VALUES IN ('de', 'fr', 'es');
+CREATE TABLE events_us PARTITION OF events FOR VALUES IN ('us', 'ca');
+```
+
+And to spread rows evenly with no natural key — for parallelism rather than pruning by value — HASH partitioning assigns each row to one of N buckets by a hash of the key: `PARTITION BY HASH (id)`, then children declared `FOR VALUES WITH (MODULUS 4, REMAINDER 0)`, and so on.
+
+For RANGE you can also add a catch-all so out-of-range rows land somewhere instead of erroring:
+
+```sql
+CREATE TABLE measurements_default PARTITION OF measurements DEFAULT;
+```
+
+Handy as a safety net, though rows in the DEFAULT partition can't be pruned by value — treat it as a place to notice stragglers, not a substitute for real partitions.
+
+## Your turn
+
+April data is arriving. Add a fourth monthly partition for April 2024, then insert the reading that failed earlier — this time it has a home to route into.
+
+<Run>
+CREATE TABLE measurements_2024_04 PARTITION OF measurements
+  FOR VALUES FROM ('2024-04-01') TO ('2024-05-01');
+</Run>
+
+<Run>
+INSERT INTO measurements (sensor_id, recorded_at, reading)
+VALUES (1, '2024-04-15 09:00:00', 21.5);
+</Run>
+
+Confirm the row landed in the new child, not anywhere else:
+
+<Run>
+SELECT count(*) FROM measurements_2024_04;
+</Run>
+
+One row — routed straight into April by its `recorded_at`. The parent's total is now 4,369, and the new child inherited the `sensor_id` index from the parent without you asking.
+
+<Check id="april-partition-populated">
+Create `measurements_2024_04` and insert the April row above. We'll confirm the child partition holds exactly one row.
+</Check>
+
+## What you learned
+
+- `PARTITION BY RANGE (col)` splits one logical table into physical children, each owning a slice of the key; inserts into the parent route to the matching child automatically.
+- Rows outside every range error out — add more partitions, or a `DEFAULT` partition as a catch-all (which can't be pruned by value).
+- Partition pruning lets a query with a partition-key filter skip non-matching children entirely — `EXPLAIN` shows only the partitions actually scanned.
+- An index created on the parent propagates to every child, current and future.
+- Archiving old data is a metadata operation: `DROP TABLE partition` reclaims space instantly, `DETACH PARTITION` unlinks a child to keep — both avoid a bulk `DELETE` and its `VACUUM` cleanup.
+- LIST partitions by discrete categories, HASH spreads rows evenly across buckets.
+
+Up next: Module 8 — Programmability, starting with views.
