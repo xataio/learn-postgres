@@ -1,0 +1,3 @@
+title: Postgres power types
+difficulty: intermediate
+summary: Go beyond scalars — JSON/JSONB, arrays, full-text search, ranges, generated columns, UUIDs, and domains.

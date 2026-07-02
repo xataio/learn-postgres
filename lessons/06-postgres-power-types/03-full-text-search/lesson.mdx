@@ -1,0 +1,199 @@
+Searching prose with `LIKE '%word%'` feels like search, but it isn't. It matches raw characters, not meaning — so it misses "running" when you type "run", trips over case, ranks nothing, and scans every row. Postgres has a real search engine built in: turn text into normalized *lexemes*, then match and rank against them.
+
+The seed is a small blog: six `articles`, each with a `title` and a paragraph of `body`, on mixed topics.
+
+<Run>
+SELECT id, title FROM articles ORDER BY id;
+</Run>
+
+## Why `LIKE` is not search
+
+Ask `LIKE` for articles about running. You'll get exactly the rows that contain the literal string "run":
+
+<Run>
+SELECT title FROM articles WHERE body ILIKE '%run%';
+</Run>
+
+That match is dumb in both directions. It catches "running" and "runners" by accident (the substring "run" is in there), but it would happily match "runny" or "prune" too, and it has no idea that "ran" is the same verb. There's no ranking — every hit is equal — and on a big table each query is a full scan. We need to search *words*, normalized to their root, not characters.
+
+## Documents become lexemes: `to_tsvector`
+
+`to_tsvector('english', text)` parses text into a `tsvector`: a sorted list of *lexemes* (normalized word roots) with the positions where each appears. Watch what the `english` configuration does to a sentence:
+
+<Run>
+SELECT to_tsvector('english', 'The runners were running and had ran ten miles');
+</Run>
+
+Three things happened. "runners", "running", and "ran" all collapsed to the single lexeme `run` — that's **stemming**. Common words like "the", "were", "and", "had" vanished — those are **stop words**, too frequent to be useful. And every surviving lexeme carries its position (`run:2,4,7`), which powers phrase search and ranking later.
+
+That's why full-text search beats `LIKE`: it compares meaning-bearing roots, not letters.
+
+## Matching with `tsquery` and `@@`
+
+A search needs the other half: a `tsquery`, the parsed query. The match operator `@@` returns true when the vector satisfies the query. There are four ways to build a tsquery, from strict to friendly.
+
+`to_tsquery` is the raw form — you write the operators yourself, and lexemes must be single tokens:
+
+<Run>
+SELECT to_tsvector('english', 'I ran a marathon') @@ to_tsquery('english', 'run');
+</Run>
+
+Because the document stems "ran" to `run` and the query stems too, `run` matches `ran`. `LIKE '%run%'` could never do that.
+
+`plainto_tsquery` takes plain words and `AND`s them together — no operator syntax to learn:
+
+<Run>
+SELECT plainto_tsquery('english', 'running marathon');
+</Run>
+
+`phraseto_tsquery` keeps word order, requiring the lexemes to be adjacent (note the `\<->` "followed-by" operator it produces):
+
+<Run>
+SELECT phraseto_tsquery('english', 'quick brown fox');
+</Run>
+
+And `websearch_to_tsquery` understands the syntax people already type into search boxes — quoted phrases, `or`, and `-` for exclude. This is usually the one you want for user input:
+
+<Run>
+SELECT websearch_to_tsquery('english', 'marathon "long runs" -treadmill');
+</Run>
+
+Now a real search over the table:
+
+<Run>
+SELECT title
+FROM articles
+WHERE to_tsvector('english', title || ' ' || body) @@ websearch_to_tsquery('english', 'running');
+</Run>
+
+Every article that talks about running, ran, runners, or runs comes back — regardless of which surface form the author used.
+
+## tsquery operators
+
+When you build a query with `to_tsquery`, you combine lexemes with operators: `&` and, `|` or, `!` not, and `\<->` followed-by (phrase). Compare "run and rain" against "run or rain":
+
+<Run>
+SELECT title
+FROM articles
+WHERE to_tsvector('english', body) @@ to_tsquery('english', 'run & rain');
+</Run>
+
+<Run>
+SELECT title
+FROM articles
+WHERE to_tsvector('english', body) @@ to_tsquery('english', 'run | rain');
+</Run>
+
+`!` excludes — running articles that are *not* about treadmills:
+
+<Run>
+SELECT title
+FROM articles
+WHERE to_tsvector('english', body) @@ to_tsquery('english', 'run & !treadmill');
+</Run>
+
+And `\<->` demands the lexemes be adjacent, so "quick brown" only matches when those words sit side by side:
+
+<Run>
+SELECT title
+FROM articles
+WHERE to_tsvector('english', body) @@ to_tsquery('english', 'quick \<-> brown');
+</Run>
+
+## Ranking by relevance: `ts_rank`
+
+Search without ranking is a list, not results. `ts_rank` scores how well a document matches a query — more hits, rarer terms, and closer positions score higher. Order by it descending and the best matches float to the top:
+
+<Run>
+SELECT title,
+       ts_rank(to_tsvector('english', body), websearch_to_tsquery('english', 'run')) AS rank
+FROM articles
+WHERE to_tsvector('english', body) @@ websearch_to_tsquery('english', 'run')
+ORDER BY rank DESC;
+</Run>
+
+`ts_rank_cd` ("cover density") is a sibling that also rewards matched lexemes appearing *close together*, which is often what you want for phrase-like relevance:
+
+<Run>
+SELECT title,
+       ts_rank_cd(to_tsvector('english', body), websearch_to_tsquery('english', 'run rain')) AS rank
+FROM articles
+WHERE to_tsvector('english', body) @@ websearch_to_tsquery('english', 'run rain')
+ORDER BY rank DESC;
+</Run>
+
+## Highlighting matches: `ts_headline`
+
+To show *why* a row matched, `ts_headline` returns a snippet of the original text with the matching lexemes wrapped (by default in `\<b>` tags). It works on the raw text, not the tsvector:
+
+<Run>
+SELECT ts_headline('english', body, websearch_to_tsquery('english', 'run rain')) AS snippet
+FROM articles
+WHERE to_tsvector('english', body) @@ websearch_to_tsquery('english', 'run rain');
+</Run>
+
+## Weighting fields: `setweight`
+
+A hit in the *title* should count more than a hit in the *body*. `setweight` tags every lexeme in a tsvector with a label — `A`, `B`, `C`, or `D`, highest to lowest — and you concatenate the tagged vectors with `||` into one. `ts_rank` then reads those labels and scores an A-hit above a B-hit:
+
+<Run>
+SELECT title,
+       ts_rank(
+         setweight(to_tsvector('english', title), 'A') ||
+         setweight(to_tsvector('english', body),  'B'),
+         websearch_to_tsquery('english', 'run')
+       ) AS rank
+FROM articles
+WHERE (setweight(to_tsvector('english', title), 'A') ||
+       setweight(to_tsvector('english', body),  'B'))
+      @@ websearch_to_tsquery('english', 'run')
+ORDER BY rank DESC;
+</Run>
+
+The article with "run" in its title now outranks the ones that only mention it in the body.
+
+## Making it fast: a generated column + GIN index
+
+Recomputing `to_tsvector(...)` on every query means Postgres can't use an index — it's back to scanning. The fix is to *store* the vector once. A `GENERATED ALWAYS AS (...) STORED` column keeps a `tsvector` that Postgres maintains automatically on every insert and update, so it's always in sync:
+
+<Run>
+ALTER TABLE articles
+  ADD COLUMN search tsvector
+  GENERATED ALWAYS AS (
+    setweight(to_tsvector('english', title), 'A') ||
+    setweight(to_tsvector('english', coalesce(body, '')), 'B')
+  ) STORED;
+</Run>
+
+Now searches read the precomputed column, weighting included:
+
+<Run>
+SELECT title, ts_rank(search, websearch_to_tsquery('english', 'run')) AS rank
+FROM articles
+WHERE search @@ websearch_to_tsquery('english', 'run')
+ORDER BY rank DESC;
+</Run>
+
+To make that `@@` lookup fast at scale, add a **GIN index** on the column — a GIN index maps each lexeme to the rows that contain it, so a search touches only matching rows instead of scanning the table:
+
+<Run>
+CREATE INDEX articles_search_idx ON articles USING gin (search);
+</Run>
+
+On six rows the planner won't bother with the index, but on a real corpus this is what turns full-text search from a scan into a lookup. (Index types get their own lesson — here just note that `tsvector` columns want `gin`.)
+
+<Check id="articles-search-column">
+Add the STORED generated `search tsvector` column with the `ALTER TABLE` above. We'll confirm the `articles` table has a `search` column of type `tsvector`.
+</Check>
+
+## What you learned
+
+- `LIKE '%word%'` matches characters, not words: no stemming, no ranking, and a full scan every time — it is not search.
+- `to_tsvector('english', text)` turns a document into normalized **lexemes** with positions — stemming ("running"/"ran" → `run`) and dropping stop words along the way.
+- A `tsquery` matches a vector with `@@`. Build it with `to_tsquery` (raw operators), `plainto_tsquery` (words AND'd), `phraseto_tsquery` (ordered phrase), or `websearch_to_tsquery` (user-friendly search syntax).
+- tsquery operators: `&` and, `|` or, `!` not, `<->` followed-by.
+- `ts_rank` / `ts_rank_cd` score relevance so you can `ORDER BY` the best matches first; `ts_headline` returns a highlighted snippet.
+- `setweight` labels lexemes `A`–`D` so a title hit can outrank a body hit; concatenate weighted vectors with `||`.
+- Store the vector in a `GENERATED ALWAYS AS (...) STORED` column and add a `GIN` index so searches are a lookup, not a scan.
+
+Up next: ranges and generated columns.
