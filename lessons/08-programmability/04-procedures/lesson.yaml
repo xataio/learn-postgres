@@ -1,0 +1,19 @@
+title: Procedures
+summary: Stored procedures with CREATE PROCEDURE and CALL — and the one thing functions can't do, managing transactions with COMMIT and ROLLBACK mid-run.
+estimatedMinutes: 14
+tags:
+  - procedures
+  - create-procedure
+  - call
+  - transactions
+  - commit
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: jobs-archived
+    type: row-count
+    description: Process every job, then CALL a procedure that moves the finished jobs into archived_jobs.
+    table: archived_jobs
+    expect:
+      rowCount: 500

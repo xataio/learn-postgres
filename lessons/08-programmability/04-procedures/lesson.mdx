@@ -1,0 +1,191 @@
+Functions compute a value and hand it back to a query. A *procedure* is different: it runs for its side effects, returns nothing to a surrounding `SELECT`, and is invoked with its own statement — `CALL`. That distinction unlocks the one thing a function can never do: manage transactions from the inside, committing work as it goes.
+
+The seed is a work queue: a `jobs` table with 500 rows all marked `pending`, plus an empty `archived_jobs` table we'll fill later.
+
+<Run>
+SELECT status, count(*) FROM jobs GROUP BY status;
+</Run>
+
+## `CREATE PROCEDURE` and `CALL`
+
+A procedure looks like a function without a `RETURNS` clause. Here's one that marks every pending job as done. Define it first:
+
+<Run>
+CREATE PROCEDURE mark_all_done()
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  UPDATE jobs SET status = 'done' WHERE status = 'pending';
+END;
+$$;
+</Run>
+
+You can't `SELECT mark_all_done()` — a procedure isn't an expression. You invoke it with `CALL`, which is a statement all on its own:
+
+<Run>
+CALL mark_all_done();
+</Run>
+
+Check the result — everything is `done` now:
+
+<Run>
+SELECT status, count(*) FROM jobs GROUP BY status;
+</Run>
+
+So far this is just a function you call awkwardly. The real reason procedures exist is the next part. Let's reset the queue before moving on:
+
+<Run>
+UPDATE jobs SET status = 'pending';
+</Run>
+
+## Procedures can control transactions
+
+Inside a function, the whole call runs in one transaction that the caller owns — a function cannot `COMMIT` or `ROLLBACK`. A procedure can. That's the headline feature.
+
+Why does it matter? Imagine processing all 500 jobs in a single `UPDATE`. It works, but it's one giant transaction: it holds row locks on every touched row until the very end, and if it fails at row 499 you lose all the work. Batch and maintenance jobs want the opposite — process a chunk, commit it, release those locks, move on. A crash then costs you one chunk, not the lot.
+
+Here's a procedure that walks the queue in chunks of 100 and commits after each one:
+
+<Run>
+CREATE PROCEDURE process_jobs(batch_size int DEFAULT 100)
+LANGUAGE plpgsql
+AS $$
+DECLARE
+  touched int;
+BEGIN
+  LOOP
+    UPDATE jobs
+    SET status = 'done'
+    WHERE id IN (
+      SELECT id FROM jobs WHERE status = 'pending'
+      ORDER BY id LIMIT batch_size
+    );
+    GET DIAGNOSTICS touched = ROW_COUNT;
+    EXIT WHEN touched = 0;
+    RAISE NOTICE 'committed a batch of %', touched;
+    COMMIT;
+  END LOOP;
+END;
+$$;
+</Run>
+
+The `COMMIT` inside the loop is the whole point: each pass through finalizes its batch and starts a fresh transaction for the next one. `GET DIAGNOSTICS ... = ROW_COUNT` tells us how many rows the last `UPDATE` touched, and we stop once a batch comes back empty.
+
+Now run it. Watch for the `NOTICE` lines — one per committed batch:
+
+<Run>
+CALL process_jobs(100);
+</Run>
+
+Five batches, five commits, 500 jobs done:
+
+<Run>
+SELECT status, count(*) FROM jobs GROUP BY status;
+</Run>
+
+## The gotcha: `COMMIT` needs to own the transaction
+
+There's a rule that trips everyone up: a procedure can `COMMIT` **only when the `CALL` is not already inside an outer transaction block**. If you wrap the call in `BEGIN ... COMMIT` yourself, the procedure isn't in charge of the transaction — you are — and its internal `COMMIT` will error out.
+
+A plain `CALL` on its own (autocommit) works, which is what you just did. But this pattern fails:
+
+```sql
+BEGIN;
+CALL process_jobs(100);   -- error: invalid transaction termination
+COMMIT;
+```
+
+The fix is simply to `CALL` the procedure as its own statement, not inside an explicit `BEGIN`/`COMMIT`. The same is true from application code: don't open a transaction around a procedure that commits internally — let it manage its own.
+
+## Returning a value with `INOUT`
+
+Procedures don't `RETURN`, but they can still hand data back through `INOUT` parameters. An `INOUT` parameter is passed in *and* sent back out; the `CALL` returns a one-row result with the final values. Here's a procedure that archives one batch and reports how many it moved:
+
+<Run>
+CREATE PROCEDURE archive_batch(batch_size int, INOUT moved int DEFAULT 0)
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  WITH picked AS (
+    DELETE FROM jobs
+    WHERE id IN (
+      SELECT id FROM jobs WHERE status = 'done'
+      ORDER BY id LIMIT batch_size
+    )
+    RETURNING id, payload
+  )
+  INSERT INTO archived_jobs (id, payload)
+  SELECT id, payload FROM picked;
+  GET DIAGNOSTICS moved = ROW_COUNT;
+END;
+$$;
+</Run>
+
+Because it has an `INOUT` parameter, `CALL` gives you a result row back — pass a placeholder for the out value:
+
+<Run>
+CALL archive_batch(50, NULL);
+</Run>
+
+That moved 50 finished jobs into `archived_jobs` and told you the count. Let's clean up so the exercise below starts from a known state — put those 50 back as done:
+
+<Run>
+INSERT INTO jobs (payload)
+SELECT payload FROM archived_jobs;
+</Run>
+
+<Run>
+UPDATE jobs SET status = 'done' WHERE status = 'pending';
+</Run>
+
+<Run>
+TRUNCATE archived_jobs;
+</Run>
+
+## Your turn
+
+Every job is now `done`. Write a procedure `archive_done_jobs()` that moves **all** finished jobs out of `jobs` and into `archived_jobs` — deleting them from `jobs` in the same step so they aren't archived twice. Use the `DELETE ... RETURNING` into `INSERT` pattern from above, without the batch limit. Try it before peeking — here's one way to define it:
+
+<Run>
+CREATE PROCEDURE archive_done_jobs()
+LANGUAGE plpgsql
+AS $$
+BEGIN
+  WITH picked AS (
+    DELETE FROM jobs WHERE status = 'done'
+    RETURNING id, payload
+  )
+  INSERT INTO archived_jobs (id, payload)
+  SELECT id, payload FROM picked;
+END;
+$$;
+</Run>
+
+Now `CALL` it as its own statement so it owns its transaction:
+
+<Run>
+CALL archive_done_jobs();
+</Run>
+
+See what landed — all 500 jobs are now in the archive, and `jobs` is empty:
+
+<Run>
+SELECT
+  (SELECT count(\*) FROM archived_jobs) AS archived,
+  (SELECT count(\*) FROM jobs)          AS remaining;
+</Run>
+
+<Check id="jobs-archived">
+Define `archive_done_jobs()` and `CALL` it. We'll confirm `archived_jobs` holds all 500 jobs.
+</Check>
+
+## What you learned
+
+- A procedure runs for side effects, returns nothing to a query, and is invoked with `CALL proc(args)` — not `SELECT`.
+- `CREATE PROCEDURE` has no `RETURNS`; the body is a `BEGIN ... END` block, just like a `plpgsql` function.
+- The defining feature: a procedure can `COMMIT` and `ROLLBACK` mid-run. Functions can't — they run inside the caller's single transaction.
+- That enables chunked batch jobs: process a batch, `COMMIT`, release locks, repeat — a failure costs one batch instead of everything.
+- The gotcha: an internal `COMMIT` works only when the `CALL` isn't already inside an outer `BEGIN`/`COMMIT`. Call the procedure as its own statement.
+- Procedures return data through `INOUT` parameters; the `CALL` yields a one-row result with the final values.
+
+Up next: Module 9 — Concurrency, starting with MVCC and isolation levels.
