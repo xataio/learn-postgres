@@ -1,6 +1,6 @@
 An index is the single biggest lever you have on query speed. This lesson builds the mental model — what an index *is*, when Postgres uses one, and when it correctly ignores the one you built.
 
-The seed is an `events` table with **three million rows**: an `id`, a high-cardinality `user_id`, a lopsided `status`, a `created_at`, and an `amount`. Big enough that the difference between reading every row and jumping straight to a few isn't just visible in the plan — you can watch it in the query's execution time.
+The seed is an `events` table with **twenty-five million rows**: an `id`, a high-cardinality `user_id`, a lopsided `status`, a `created_at`, and an `amount`. Big enough that the difference between reading every row and jumping straight to a few isn't just visible in the plan — you can watch it in the query's execution time.
 
 <Run>
 SELECT count(*) FROM events;
@@ -14,7 +14,7 @@ Ask for one user's events. There's no index yet, so watch how Postgres plans it:
 EXPLAIN SELECT * FROM events WHERE user_id = 42;
 </Run>
 
-The top line says **Seq Scan on events** — a *sequential scan*. To find the handful of rows for user 42, Postgres reads all three million rows and throws away the ones that don't match. The `rows=` estimate on that line is roughly the whole table.
+The top line says **Seq Scan on events** — a *sequential scan*. To find the handful of rows for user 42, Postgres reads all twenty-five million rows and throws away the ones that don't match. The `rows=` estimate on that line is roughly the whole table.
 
 That's the default when there's no better path. It's correct, it's just linear: double the table, double the work. Every filtered query without a useful index pays this.
 
@@ -26,7 +26,7 @@ Think of the table as a book with no index at the back. To find every mention of
 EXPLAIN ANALYZE SELECT * FROM events WHERE user_id = 42;
 </Run>
 
-On three million rows that's tens of milliseconds — the price of touching every row to return a few dozen. Hold onto that number; we're about to crush it. (Confusingly, the `ANALYZE` *inside* `EXPLAIN ANALYZE` means "run it and time it" — it is **not** the standalone `ANALYZE` command we use next, which gathers statistics. Reading these plans in full is the next lesson; for now just watch the Execution Time.)
+On twenty-five million rows that's a few hundred milliseconds — the price of touching every row to return a few dozen. Hold onto that number; we're about to crush it. (Confusingly, the `ANALYZE` *inside* `EXPLAIN ANALYZE` means "run it and time it" — it is **not** the standalone `ANALYZE` command we use next, which gathers statistics. Reading these plans in full is the next lesson; for now just watch the Execution Time.)
 
 ## Give the planner stats first
 
@@ -52,7 +52,7 @@ Now re-check the same query's plan:
 EXPLAIN SELECT * FROM events WHERE user_id = 42;
 </Run>
 
-The plan changed to an **Index Scan using events_user_id_idx** (you may also see a *Bitmap Index Scan* — same idea). Instead of reading three million rows, Postgres walks the sorted index to user 42's entries and fetches just those. The estimated `rows=` dropped to a tiny number. Same query, same result, a fraction of the work.
+The plan changed to an **Index Scan using events_user_id_idx** (you may also see a *Bitmap Index Scan* — same idea). Instead of reading twenty-five million rows, Postgres walks the sorted index to user 42's entries and fetches just those. The estimated `rows=` dropped to a tiny number. Same query, same result, a fraction of the work.
 
 Now put it on the same clock:
 
@@ -60,7 +60,7 @@ Now put it on the same clock:
 EXPLAIN ANALYZE SELECT * FROM events WHERE user_id = 42;
 </Run>
 
-There's the payoff. The Execution Time falls from tens of milliseconds to a *fraction of one* — often a hundredfold-plus speedup — because Postgres jumped straight to user 42's rows instead of reading three million. And the gap only *widens* as the table grows: the Seq Scan slows down with every row you add; the index barely notices.
+There's the payoff. The Execution Time falls from a few hundred milliseconds to a *fraction of one* — orders of magnitude faster — because Postgres jumped straight to user 42's rows instead of reading twenty-five million. And the gap only *widens* as the table grows: the Seq Scan slows down with every row you add; the index barely notices.
 
 ## What a B-tree covers
 
@@ -102,7 +102,7 @@ CREATE INDEX events_status_idx ON events (status);
 EXPLAIN SELECT * FROM events WHERE status = 'ok';
 </Run>
 
-Still a **Seq Scan** — the planner ignores the index on purpose, because reading 2.4 million scattered rows via the index is worse than one straight pass. Now ask for a *rare* status instead:
+Still a **Seq Scan** — the planner ignores the index on purpose, because reading twenty million scattered rows via the index is worse than one straight pass. Now ask for a *rare* status instead:
 
 <Run>
 EXPLAIN SELECT * FROM events WHERE status = 'refunded';
@@ -167,7 +167,7 @@ Index the columns your real queries filter and join on, size them by selectivity
 
 - Without a useful index, a filtered query does a **Seq Scan** — it reads every row. Cost grows with table size.
 - `CREATE INDEX name ON table (column)` builds a **B-tree**, a sorted structure Postgres can seek into. Run `ANALYZE` after loading data so the planner has stats to plan with.
-- `EXPLAIN` shows the plan (**Seq Scan** reads all vs **Index Scan** jumps to matches); `EXPLAIN ANALYZE` runs the query and reports the real **Execution Time** — on the three-million-row table the index turns tens of milliseconds into a fraction of one.
+- `EXPLAIN` shows the plan (**Seq Scan** reads all vs **Index Scan** jumps to matches); `EXPLAIN ANALYZE` runs the query and reports the real **Execution Time** — on the twenty-five-million-row table the index turns a few hundred milliseconds into a fraction of one.
 - A B-tree serves `=`, `<`, `<=`, `>`, `>=`, `BETWEEN`, `IN`, `IS NULL`, `ORDER BY`, and prefix `LIKE 'abc%'` — but not `LIKE '%abc'`.
 - **Selectivity decides usage:** an index helps only when the query returns a small fraction of rows. For common values the planner correctly sticks with a Seq Scan.
 - A multicolumn index on `(a, b)` follows the **left-prefix rule** — it serves `a` and `a+b`, not `b` alone. Lead with the column you filter on most.
