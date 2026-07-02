@@ -1,0 +1,127 @@
+A *trigger* runs a function automatically whenever a row is inserted, updated, or deleted — no application code has to remember to call it. The database enforces the behavior itself, which is exactly what you want for things like "always stamp `updated_at`" or "log every change".
+
+The seed is a small `documents` table plus an empty `document_audit` log. Have a look:
+
+<Run>
+SELECT id, title, updated_at FROM documents ORDER BY id;
+</Run>
+
+## A trigger needs a function first
+
+You can't attach arbitrary SQL to a trigger — you attach a *function* that returns the special type `trigger`. Inside it, PL/pgSQL hands you two implicit rows: `NEW` (the row as it will be, for INSERT/UPDATE) and `OLD` (the row as it was, for UPDATE/DELETE). Write the function, then wire it up.
+
+Here's one that forces `updated_at` to the current time on every change. It edits `NEW` and returns it — a `BEFORE` trigger uses the returned row as the row to actually write:
+
+<Run>
+CREATE FUNCTION set_updated_at() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  NEW.updated_at := now();
+  RETURN NEW;
+END;
+$$;
+</Run>
+
+The function on its own does nothing yet — it's just defined. `CREATE TRIGGER` is what binds it to a table and an event:
+
+<Run>
+CREATE TRIGGER documents_set_updated_at
+  BEFORE UPDATE ON documents
+  FOR EACH ROW
+  EXECUTE FUNCTION set_updated_at();
+</Run>
+
+Now change a row and read `updated_at` back — you never set it, but it moved:
+
+<Run>
+UPDATE documents SET body = 'Getting started, revised.' WHERE title = 'Welcome';
+SELECT title, updated_at FROM documents WHERE title = 'Welcome';
+</Run>
+
+`BEFORE ... FOR EACH ROW` is the key pairing here: **BEFORE** means the trigger fires before the write, so anything it does to `NEW` lands in the stored row. **FOR EACH ROW** means it fires once per affected row (a `FOR EACH STATEMENT` trigger fires once per statement, regardless of row count — useful for coarse "something changed" signals, but it gets no `NEW`/`OLD`).
+
+## AFTER triggers: side effects like an audit log
+
+`BEFORE` is for shaping the row that's about to be written. For *side effects* — writing somewhere else after the change is committed to the statement — use `AFTER`. An audit trigger is the classic case: it can't change the row (too late), it just records what happened.
+
+This function inserts one row into `document_audit` describing the operation. `TG_OP` is another automatic variable holding the event name (`'INSERT'`, `'UPDATE'`, or `'DELETE'`). For a DELETE there's no `NEW`, so it reads the id from whichever of `NEW`/`OLD` exists:
+
+<Run>
+CREATE FUNCTION log_document_change() RETURNS trigger
+LANGUAGE plpgsql AS $$
+BEGIN
+  INSERT INTO document_audit (document_id, action)
+  VALUES (COALESCE(NEW.id, OLD.id), TG_OP);
+  RETURN NULL;
+END;
+$$;
+</Run>
+
+An `AFTER` trigger's return value is ignored, so `RETURN NULL` is conventional. One trigger can cover several events at once — list them with `OR`:
+
+<Run>
+CREATE TRIGGER documents_audit
+  AFTER INSERT OR UPDATE OR DELETE ON documents
+  FOR EACH ROW
+  EXECUTE FUNCTION log_document_change();
+</Run>
+
+Exercise it. Insert, update, delete — then look at the log the trigger built for you:
+
+<Run>
+INSERT INTO documents (title, body) VALUES ('Changelog', 'v1 released.');
+UPDATE documents SET title = 'Product roadmap' WHERE title = 'Roadmap';
+DELETE FROM documents WHERE title = 'Style guide';
+SELECT document_id, action, changed_at FROM document_audit ORDER BY id;
+</Run>
+
+Three statements, three audit rows — and the application code that ran them never mentioned `document_audit`.
+
+## Firing only when it matters: `WHEN`
+
+Every UPDATE fires the trigger above, even one that changes nothing meaningful. A `WHEN (...)` condition on the trigger skips the function unless the condition holds, which is cheaper than firing and returning early. For example, only audit an update when the title actually changed:
+
+```sql
+CREATE TRIGGER documents_audit_title
+  AFTER UPDATE ON documents
+  FOR EACH ROW
+  WHEN (NEW.title IS DISTINCT FROM OLD.title)
+  EXECUTE FUNCTION log_document_change();
+```
+
+`IS DISTINCT FROM` is the null-safe "not equal" — it treats two NULLs as equal, so a title going to or from NULL still counts as a change.
+
+## Your turn
+
+Start clean so the counts are unambiguous — clear the audit log, then make **exactly one** update and **exactly one** delete. The `documents_audit` trigger you built above is already attached, so both statements should each write one audit row:
+
+<Run>
+TRUNCATE document_audit;
+UPDATE documents SET body = 'Reviewed.' WHERE title = 'Welcome';
+DELETE FROM documents WHERE title = 'Product roadmap';
+SELECT action, count(*) FROM document_audit GROUP BY action ORDER BY action;
+</Run>
+
+You should see one `DELETE` and one `UPDATE`.
+
+<Check id="audit-rows-written">
+After truncating and running one UPDATE and one DELETE, `document_audit` holds exactly one row per action. We'll confirm the AFTER trigger recorded both.
+</Check>
+
+## Cautions
+
+Triggers are invisible magic: a plain `UPDATE` can now touch other tables, and someone reading the app code won't see it. That power cuts both ways.
+
+- **Keep trigger functions simple and fast.** They run *inside* the statement's transaction — every affected row pays their cost, and a slow trigger silently slows every write.
+- **They're part of the transaction.** If the statement rolls back, the trigger's effects roll back too. That's good for consistency (the audit row can't survive a failed change), but it means an exception raised in a trigger aborts the whole statement.
+- **Don't hide critical logic no one expects.** Maintained columns and audit logs are great fits. Business rules that a reader would never guess are lurking in a trigger are a maintenance trap.
+
+## What you learned
+
+- A trigger runs a function automatically on INSERT/UPDATE/DELETE. Write the function first — `RETURNS trigger`, `LANGUAGE plpgsql` — using the implicit `NEW`/`OLD` rows and `TG_OP`.
+- `CREATE TRIGGER ... BEFORE|AFTER event ON table FOR EACH ROW EXECUTE FUNCTION fn()` binds it. **BEFORE** can modify `NEW` before it's written; **AFTER** is for side effects like audit rows.
+- `FOR EACH ROW` fires once per row (with `NEW`/`OLD`); `FOR EACH STATEMENT` fires once per statement.
+- A `WHEN (...)` condition skips the function unless it holds — use `IS DISTINCT FROM` for null-safe comparisons.
+- Triggers run inside the statement's transaction, so keep them simple: every write pays their cost, and their effects roll back with the statement.
+
+Up next: stored procedures and transaction control.
