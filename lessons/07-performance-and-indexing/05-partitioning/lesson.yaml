@@ -1,0 +1,19 @@
+title: Partitioning
+summary: Split one huge logical table into physical children by range so bulk deletes are cheap and queries prune to just the partitions they need.
+estimatedMinutes: 15
+tags:
+  - partitioning
+  - partition-by-range
+  - partition-pruning
+  - declarative-partitioning
+  - explain
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: april-partition-populated
+    type: row-count
+    description: Add a measurements_2024_04 partition and insert one April row that routes into it.
+    table: measurements_2024_04
+    expect:
+      rowCount: 1
