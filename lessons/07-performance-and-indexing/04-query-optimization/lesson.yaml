@@ -1,0 +1,22 @@
+title: Query optimization
+summary: Give the cost-based planner good statistics and sargable predicates — and fix the anti-patterns that quietly disable your indexes.
+estimatedMinutes: 15
+tags:
+  - query-optimization
+  - planner
+  - statistics
+  - analyze
+  - sargable
+  - extended-statistics
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: extended-stats-created
+    type: query-returns
+    description: Create the events_city_country_stat extended-statistics object on (city, country).
+    sql: SELECT count(*) FROM pg_statistic_ext WHERE stxname = 'events_city_country_stat'
+    expect:
+      rowCount: 1
+      rows:
+        - [1]

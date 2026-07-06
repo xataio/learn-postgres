@@ -1,0 +1,180 @@
+You already know how to read `EXPLAIN` and when an index helps. This lesson is about the layer above that: the *planner*. It is cost-based — for every query it estimates how many rows each step will touch, prices the alternatives, and picks the cheapest. Feed it good estimates and it plans well; feed it bad ones and it picks a slow plan even when a perfect index exists.
+
+Those estimates come entirely from *statistics* gathered by `ANALYZE`. The seed loaded 200,000 `events` (a login/click/purchase log) and 5,000 `users`, and ran `ANALYZE` for you, so the numbers below are trustworthy from the start.
+
+## Estimated vs. actual: reading the planner's mind
+
+`EXPLAIN ANALYZE` runs the query and prints both what the planner *expected* and what actually happened. The gap between them is the single most useful diagnostic you have.
+
+<Run>
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT * FROM events WHERE action = 'purchase';
+</Run>
+
+Look at the `Seq Scan` line: `rows=NNN` in the cost section is the *estimate*; `actual rows=NNN` is the truth. Here they line up — both near 40,000 — because the stats are fresh. When estimates match reality, the planner's cost math is sound and you can trust the plan it chose.
+
+## Stale statistics pick bad plans
+
+Statistics are a snapshot. Load a pile of rows without re-analyzing and the planner is flying blind. Watch: we build a copy of `events` while it is empty, so its stats say "tiny table", then fill it and query *before* analyzing.
+
+<Run>
+CREATE TABLE recent AS SELECT \* FROM events WHERE false;
+INSERT INTO recent SELECT \* FROM events;
+</Run>
+
+<Run>
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT \* FROM recent WHERE action = 'login';
+</Run>
+
+The estimate is a few hundred rows; the actual is 40,000. The planner still believes `recent` is empty, because nothing refreshed its stats after the bulk load. On a join this is how you get a nested loop that should have been a hash join. The fix is one command:
+
+<Run>
+ANALYZE recent;
+</Run>
+
+<Run>
+EXPLAIN (ANALYZE, TIMING OFF, SUMMARY OFF)
+SELECT \* FROM recent WHERE action = 'login';
+</Run>
+
+Now the estimate is within a hair of 40,000. Autovacuum runs `ANALYZE` for you in the background, but after a big bulk load — or a migration — run it yourself rather than wait.
+
+## Anti-pattern: a function or cast on the indexed column
+
+The most common way to accidentally disable an index is to wrap the column in a function. `events_created_at_idx` indexes `created_at`, but the planner can only use it against the *bare* column. Cast it and the index is dead:
+
+<Run>
+EXPLAIN
+SELECT count(*) FROM events
+WHERE created_at::date = (now() - interval '10 days')::date;
+</Run>
+
+That is a `Seq Scan`: to test `created_at::date` Postgres must compute the cast on all 200,000 rows first. Rewrite the predicate so the bare column is compared to constants — a *sargable* range — and the B-tree comes back:
+
+<Run>
+EXPLAIN
+SELECT count(*) FROM events
+WHERE created_at >= (now() - interval '10 days')::date
+  AND created_at \< (now() - interval '9 days')::date;
+</Run>
+
+Now you get a `Bitmap Index Scan on events_created_at_idx`. Same rows, but the index does the narrowing instead of a full scan. (If you truly cannot avoid the function, an *expression index* — `CREATE INDEX … ON events ((created_at::date))` — indexes the computed value instead.)
+
+## Anti-pattern: a leading-wildcard LIKE
+
+A B-tree is sorted, so it can jump to a *prefix* — but a pattern that starts with `%` has no prefix to jump to. First an index that supports pattern matching:
+
+<Run>
+CREATE INDEX events_city_pat_idx ON events (city text_pattern_ops);
+</Run>
+
+An anchored pattern uses it as a range on the prefix:
+
+<Run>
+EXPLAIN SELECT count(*) FROM events WHERE city LIKE 'Sev%';
+</Run>
+
+That is an `Index … Scan` with an `Index Cond`. Now move the wildcard to the front:
+
+<Run>
+EXPLAIN SELECT count(*) FROM events WHERE city LIKE '%lin';
+</Run>
+
+The `Index Cond` is gone — at best the pattern shows up as a `Filter`, meaning every row is examined. Leading-wildcard search is a job for a trigram (`pg_trgm`) or full-text index, not a plain B-tree.
+
+## Anti-pattern: OR across columns, and the type-mismatch trap
+
+Two smaller traps. First, comparing a column to a literal of the *wrong type*. `user_id` is a `bigint`; compare it to a quoted number and Postgres has to make the types agree. When it can push the cast onto the *literal* it is fine, but a cast forced onto the *column* — the same shape as the previous anti-pattern — defeats any index. Keep literals the same type as the column.
+
+Second, `OR` across different columns. The planner can only combine indexes with a `BitmapOr` when *both* sides are indexed. `city` has an index now but `country` does not, so this falls back to a scan:
+
+<Run>
+EXPLAIN SELECT count(*) FROM events WHERE city = 'Rome' OR country = 'Spain';
+</Run>
+
+The fix is to make each branch independently index-friendly. Either index the missing column, or split the query into a `UNION` of two selective halves so each half can use its own index — then let Postgres merge and de-duplicate the results.
+
+## Anti-pattern: an unindexed join column
+
+Primary keys are indexed automatically; the *foreign key* pointing at them is not. Joining on an unindexed column forces a scan of the child table on every lookup. The seed left `events.user_id` unindexed on purpose:
+
+<Run>
+EXPLAIN
+SELECT u.name, count(*)
+FROM users u JOIN events e ON e.user_id = u.id
+WHERE u.id = 42
+GROUP BY u.name;
+</Run>
+
+Notice the `Seq Scan on events` inside the nested loop — 200,000 rows read to find one user's events. Index the join column and the scan collapses to an index lookup:
+
+<Run>
+CREATE INDEX events_user_id_idx ON events (user_id);
+</Run>
+
+<Run>
+EXPLAIN
+SELECT u.name, count(*)
+FROM users u JOIN events e ON e.user_id = u.id
+WHERE u.id = 42
+GROUP BY u.name;
+</Run>
+
+Now the inner side is an `Index … Scan on events_user_id_idx` — a fraction of the cost. As a rule, index the columns you join on, especially foreign keys.
+
+## Extended statistics: teaching the planner about correlation
+
+Here is a subtler estimation failure. By default the planner assumes columns are *independent*: it estimates the selectivity of each predicate separately and multiplies them. That is wrong whenever two columns move together. In our data every `Paris` row is in `France`, so `city = 'Paris' AND country = 'France'` matches exactly as many rows as `city = 'Paris'` alone — but the planner does not know that.
+
+<Run>
+EXPLAIN
+SELECT \* FROM events WHERE city = 'Paris' AND country = 'France';
+</Run>
+
+The estimate is a few thousand rows. The real answer is 20,000 — the planner multiplied two selectivities that were really the *same* selectivity, and underestimated fivefold. On a bigger query that undercount leads it to pick a nested loop or skip a hash where the other plan would have won.
+
+`CREATE STATISTICS` tells Postgres to track the relationship between the columns. `dependencies` captures "city implies country"; `ndistinct` captures how many *combinations* actually occur:
+
+<Run>
+CREATE STATISTICS events_city_country_stat (dependencies, ndistinct)
+ON city, country FROM events;
+</Run>
+
+Like all statistics, it is empty until `ANALYZE` populates it:
+
+<Run>
+ANALYZE events;
+</Run>
+
+<Run>
+EXPLAIN
+SELECT \* FROM events WHERE city = 'Paris' AND country = 'France';
+</Run>
+
+The estimate is now essentially 20,000 — it matches reality. Nothing about the query or the data changed; the planner simply stopped assuming independence. Extended statistics cost nothing at query time and are the right tool whenever `EXPLAIN ANALYZE` shows a big estimate gap on a multi-column filter.
+
+## Your turn
+
+You have already created `events_city_country_stat` above. Confirm it exists in the catalog — every extended-statistics object shows up in `pg_statistic_ext`, keyed by name:
+
+<Run>
+SELECT count(*) FROM pg_statistic_ext
+WHERE stxname = 'events_city_country_stat';
+</Run>
+
+You should see `1`. (If you skipped the step, run the `CREATE STATISTICS` block above, then this one again.)
+
+<Check id="extended-stats-created">
+Create the `events_city_country_stat` extended-statistics object on `(city, country)` as shown. We confirm it is registered in `pg_statistic_ext`.
+</Check>
+
+## What you learned
+
+- The planner is *cost-based*: it estimates row counts from statistics and picks the cheapest plan. `EXPLAIN ANALYZE` shows estimate vs. actual — a big gap is your first clue.
+- Statistics go stale after bulk changes; `ANALYZE` refreshes them, and a fresh `ANALYZE` after a load beats waiting for autovacuum.
+- A function or cast on an indexed column defeats the index — rewrite predicates to be *sargable* (bare column compared to constants, e.g. a range instead of `::date`).
+- A leading-wildcard `LIKE '%x'` cannot use a B-tree; anchored prefixes can. `OR` needs both columns indexed (or a `UNION`), literals should match the column's type, and join/foreign-key columns should be indexed.
+- Extended statistics (`CREATE STATISTICS … dependencies, ndistinct`) fix the planner's underestimate when two columns are correlated — verify the effect with `EXPLAIN` before and after `ANALYZE`.
+
+Up next: partitioning — splitting a big table into manageable pieces.
