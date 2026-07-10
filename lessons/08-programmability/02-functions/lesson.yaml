@@ -14,8 +14,8 @@ checks:
   - id: net-to-gross-works
     type: query-returns
     description: Write net_to_gross(amount, rate) and have it return the tax-inclusive price.
-    sql: SELECT net_to_gross(100.00)
+    sql: SELECT net_to_gross(100.00) = 121
     expect:
       rowCount: 1
       rows:
-        - [121.0000]
+        - [true]
