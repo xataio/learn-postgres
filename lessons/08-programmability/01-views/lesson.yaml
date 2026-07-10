@@ -17,4 +17,4 @@ checks:
     expect:
       rowCount: 1
       rows:
-        - [Ada Lovelace, 4, 1200.00]
+        - [Ada Lovelace, 4, "1200.00"]
