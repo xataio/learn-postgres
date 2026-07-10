@@ -1,0 +1,20 @@
+title: Views and materialized views
+summary: Name and reuse a query as a virtual table with a view, or cache its result on disk with a materialized view.
+estimatedMinutes: 14
+tags:
+  - views
+  - materialized-views
+  - create-view
+  - refresh
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: customer-totals-view
+    type: query-returns
+    description: Create a customer_totals view; we read Ada's row back from it.
+    sql: SELECT name, order_count, lifetime_value FROM customer_totals WHERE name = 'Ada Lovelace'
+    expect:
+      rowCount: 1
+      rows:
+        - [Ada Lovelace, 4, "1200.00"]
