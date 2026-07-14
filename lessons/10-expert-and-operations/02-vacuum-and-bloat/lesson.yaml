@@ -1,0 +1,21 @@
+title: Vacuum and bloat
+summary: Why MVCC leaves dead tuples behind, how VACUUM reclaims them, and how autovacuum and fillfactor keep tables from bloating.
+estimatedMinutes: 14
+tags:
+  - vacuum
+  - bloat
+  - autovacuum
+  - mvcc
+  - fillfactor
+authors:
+  - exekias
+seed: seed.sql
+checks:
+  - id: fillfactor-set
+    type: query-returns
+    description: Rebuild the events table with fillfactor=90 so future updates can stay on-page.
+    sql: SELECT array_to_string(reloptions, ',') FROM pg_class WHERE relname = 'events'
+    expect:
+      rowCount: 1
+      rows:
+        - [fillfactor=90]
