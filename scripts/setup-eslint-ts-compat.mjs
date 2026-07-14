@@ -50,10 +50,9 @@ for (const target of targets) {
   }
 
   try {
-    if (fs.lstatSync(target)) {
-      // Already present – skip.
-      continue;
-    }
+    fs.lstatSync(target);
+    // If we reach here, target exists – skip.
+    continue;
   } catch {
     // target does not exist – fall through to create it.
   }
