@@ -1,0 +1,168 @@
+MVCC lets readers and writers work at the same time without blocking each other — but two transactions writing the *same* row must take turns. Postgres handles most of that locking for you; this lesson is about the moments you reach for a lock yourself.
+
+The seed has an `accounts` ledger for the read-modify-write pattern and a `jobs` work queue for the worker-claim pattern. Start with a look:
+
+<Run>
+SELECT * FROM accounts ORDER BY id;
+</Run>
+
+<Run>
+SELECT * FROM jobs ORDER BY id;
+</Run>
+
+## The lost update
+
+Say two transactions both want to add 50 to Ada's balance. Each one reads the current balance, adds 50 in application code, and writes the result back. Run this as one transaction — imagine a *second* identical one interleaving with it:
+
+<Run>
+BEGIN;
+SELECT balance FROM accounts WHERE owner = 'ada';
+UPDATE accounts SET balance = 150 WHERE owner = 'ada';
+COMMIT;
+</Run>
+
+The write used `150` — a value computed from a balance read *earlier*. If a second transaction read `100` at the same moment, it also computes `150` and writes it. Two `+50` deposits, but the balance only moved once: one update was silently lost. MVCC didn't save you, because each transaction read a legitimate snapshot; the bug is the gap between reading and writing.
+
+Reset Ada before moving on:
+
+<Run>
+UPDATE accounts SET balance = 100 WHERE owner = 'ada';
+</Run>
+
+## `SELECT … FOR UPDATE`: lock the row you're about to change
+
+The fix is to lock the row when you read it, so no other transaction can change it until you commit. `SELECT … FOR UPDATE` takes a row-level lock on every row it returns:
+
+<Run>
+BEGIN;
+SELECT balance FROM accounts WHERE owner = 'ada' FOR UPDATE;
+UPDATE accounts SET balance = balance + 50 WHERE owner = 'ada';
+COMMIT;
+</Run>
+
+Now Ada is `150`. A concurrent transaction that runs the same `SELECT … FOR UPDATE` **blocks** on the locked row until this one commits, then reads the *new* `150` and adds to that. Serialized correctly, no lost update. The lock is released automatically at `COMMIT` (or `ROLLBACK`) — row locks live only for the transaction that took them.
+
+Notice we also switched to `balance + 50` instead of a hard-coded number. Doing the arithmetic in SQL means the value is computed from the freshly-locked row, not a stale application variable.
+
+There are weaker row locks for weaker needs:
+
+- `FOR NO KEY UPDATE` — like `FOR UPDATE` but doesn't block another transaction that only needs to reference this row as a foreign key. This is what a plain `UPDATE` of non-key columns takes internally.
+- `FOR SHARE` — a shared read lock: many transactions can hold it at once, but nobody can `UPDATE`/`DELETE` the row until they all release. Use it for "read this and make sure it doesn't change under me," without needing to write it yourself.
+
+## Two sessions, side by side
+
+You can't run two live sessions in this single-session sandbox, but here's exactly what blocking looks like. Session 1 grabs the lock and holds it:
+
+```sql
+-- Session 1
+BEGIN;
+SELECT balance FROM accounts WHERE owner = 'ada' FOR UPDATE;
+-- ... does work, has NOT committed yet ...
+```
+
+Session 2 now tries the same thing and simply waits — the query hangs until Session 1 commits:
+
+```sql
+-- Session 2
+BEGIN;
+SELECT balance FROM accounts WHERE owner = 'ada' FOR UPDATE;  -- blocks here
+```
+
+The moment Session 1 runs `COMMIT`, Session 2 unblocks and returns the updated balance. That waiting is the whole point — it's what turns two overlapping writes into two sequential ones.
+
+## `NOWAIT` and `SKIP LOCKED`
+
+Waiting isn't always what you want. Two modifiers change the behavior when a row is already locked:
+
+- `NOWAIT` — don't wait; raise an error immediately if any target row is locked. Good when you'd rather fail fast and retry than pile up behind a slow transaction.
+- `SKIP LOCKED` — don't wait *and* don't error; just skip the locked rows and return only the ones you could lock.
+
+`SKIP LOCKED` is the foundation of a concurrent job queue. Each worker asks for the next unlocked pending job, locks it, and marks it — and because locked rows are skipped, ten workers grab ten *different* jobs instead of all fighting over the first one:
+
+<Run>
+BEGIN;
+SELECT id, payload FROM jobs
+WHERE status = 'pending'
+ORDER BY id
+FOR UPDATE SKIP LOCKED
+LIMIT 1;
+UPDATE jobs SET status = 'processing', claimed_by = 'worker-a'
+WHERE id = (
+  SELECT id FROM jobs
+  WHERE status = 'pending'
+  ORDER BY id
+  FOR UPDATE SKIP LOCKED
+  LIMIT 1
+);
+COMMIT;
+</Run>
+
+In real code you'd capture the id from the `SELECT` and reuse it; here we keep it to one atomic `<Run>` so the claim can't be split across statements. Check the queue — one job moved to `processing`:
+
+<Run>
+SELECT id, payload, status, claimed_by FROM jobs ORDER BY id;
+</Run>
+
+## Table-level locks
+
+Row locks aren't the only kind. Every statement takes a *table* lock too, usually a weak one that coexists with others: `SELECT` takes `ACCESS SHARE`, `INSERT`/`UPDATE`/`DELETE` take `ROW EXCLUSIVE`, and those two don't conflict — which is why reads and writes run concurrently.
+
+DDL is the opposite. Most `ALTER TABLE` forms take `ACCESS EXCLUSIVE`, the strongest lock, which conflicts with *everything* — including plain `SELECT`. While that lock is held, every other query on the table queues behind it:
+
+<Run>
+BEGIN;
+LOCK TABLE jobs IN ACCESS EXCLUSIVE MODE;
+SELECT count(*) FROM jobs;
+COMMIT;
+</Run>
+
+You rarely `LOCK TABLE` by hand, but the lesson holds for DDL: a migration that runs `ALTER TABLE` inside a long transaction can freeze the whole table for other clients. Keep lock-taking transactions short, and do the slow parts outside them.
+
+## Inspecting locks with `pg_locks`
+
+`pg_locks` shows every lock currently held or awaited. Take a lock and look at it in the same transaction:
+
+<Run>
+BEGIN;
+SELECT id FROM jobs WHERE id = 1 FOR UPDATE;
+SELECT locktype, mode, granted
+FROM pg_locks
+WHERE pid = pg_backend_pid() AND locktype IN ('relation', 'transactionid', 'tuple')
+ORDER BY locktype;
+COMMIT;
+</Run>
+
+You'll see the row-level and transaction locks this session holds, all `granted = true`. When a query is *blocked*, its row shows up here with `granted = false` — joining `pg_locks` to `pg_stat_activity` on `pid` is the standard way to find who is waiting on whom.
+
+## Your turn
+
+Earlier blocks nudged Ada's balance around, so start this exercise from a clean slate of 100 each, then do a safe transfer of 30 from Grace to Ada: lock *both* rows with `FOR UPDATE`, then move the money — all in one transaction so nobody can slip in between. Try it before peeking:
+
+<Run>
+BEGIN;
+UPDATE accounts SET balance = 100 WHERE owner IN ('ada', 'grace', 'linus');
+SELECT balance FROM accounts WHERE owner IN ('ada', 'grace') FOR UPDATE;
+UPDATE accounts SET balance = balance - 30 WHERE owner = 'grace';
+UPDATE accounts SET balance = balance + 30 WHERE owner = 'ada';
+COMMIT;
+</Run>
+
+Grace should be at 70 and Ada at 130, with Linus untouched at 100:
+
+<Run>
+SELECT owner, balance FROM accounts ORDER BY owner;
+</Run>
+
+<Check id="transfer-locked">
+Run the locked transfer above. We'll confirm the balances are Ada 130, Grace 70, Linus 100.
+</Check>
+
+## What you learned
+
+- MVCC lets readers and writers coexist, but two writers to the *same* row serialize — Postgres locks automatically, and sometimes you lock explicitly.
+- `SELECT … FOR UPDATE` locks the rows it returns until commit, closing the read-then-write gap that causes lost updates; `FOR NO KEY UPDATE` and `FOR SHARE` are weaker variants.
+- `NOWAIT` errors instead of waiting; `SKIP LOCKED` skips already-locked rows — the basis of the `FOR UPDATE SKIP LOCKED LIMIT 1` job-queue claim.
+- Reads and writes take compatible table locks and run concurrently; DDL like `ALTER TABLE` takes `ACCESS EXCLUSIVE` and blocks everything, so keep those transactions short.
+- `pg_locks` (joined to `pg_stat_activity`) shows what's held and what's waiting — `granted = false` marks a blocked lock request.
+
+Up next: deadlocks — detection, avoidance, and advisory locks.
