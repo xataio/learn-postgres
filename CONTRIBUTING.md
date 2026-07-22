@@ -1,182 +1,229 @@
-# Contributing a lesson
+# Contributing
 
-Lessons are the heart of this project. Every one lives in its own folder under
-[`/lessons`](./lessons) and is a self-contained unit: prose, sandbox seed, and
-optional checks. PRs that add or refine lessons are very welcome.
+Thanks for helping people learn Postgres! There are two kinds of
+contributions here:
 
-## Lesson folder
+- **Lessons** — new lessons, fixes, and clarifications under
+  [`/lessons`](./lessons). This is the heart of the project and the most
+  valuable thing you can work on.
+- **App code** — the Next.js app that renders lessons and runs the sandboxes.
+
+For local setup, see [Getting started](./README.md#getting-started-local-dev)
+in the README. You don't need Xata credentials to author lessons — the dev
+server renders lesson prose without them.
+
+## Lesson anatomy
+
+The course is organized as modules containing lessons:
 
 ```
-/lessons/<order-slug>/
-  lesson.yaml        # metadata, optional checks, seed reference
-  lesson.mdx         # the prose, with embedded SQL and components
-  seed.sql           # schema + data loaded into the learner's Postgres branch
+lessons/
+  02-changing-data/              # module folder
+    module.yaml                  # module metadata
+    01-insert/                   # lesson folder
+      lesson.yaml                # lesson metadata + optional checks
+      lesson.mdx                 # the prose, with runnable SQL blocks
+      seed.sql                   # schema + data for the learner's sandbox
+    02-update/
+    ...
 ```
 
-Folder names use `<order>-<kebab-slug>` — e.g., `01-select-basics`,
-`07-window-functions`. The numeric prefix matches `order:` in the YAML and
-controls catalog ordering.
+Ordering and slugs come **from the folder names** — `02-changing-data` is
+module 2 with slug `changing-data`; there are no `slug:` or `order:` fields in
+the YAML. Renaming a folder renames the lesson.
 
-## Scaffolding a new lesson
+### Scaffolding
 
 ```bash
-npm run new-lesson -- 04-grouping-and-aggregates
+npm run new-lesson -- <module-slug> <lesson-slug>
+# e.g.
+npm run new-lesson -- programmability event-triggers
 ```
 
-This drops a placeholder folder with the right files. Edit them, then validate:
+This creates the lesson folder with the next free number in that module and
+placeholder files. Then validate as you edit:
 
 ```bash
 npm run lessons:validate
 ```
 
-CI runs the same check on every PR.
+The validator checks YAML schemas, folder structure, seed existence, and that
+every `<Check id>` in the MDX exists in the YAML. `npm run build` additionally
+compiles every lesson's MDX — CI runs both on every PR.
 
-## `lesson.yaml`
+### `lesson.yaml`
 
-Validated against a Zod schema in [`lib/lesson-schema.ts`](./lib/lesson-schema.ts).
+Validated against [`lib/lesson-schema.ts`](./lib/lesson-schema.ts):
 
 ```yaml
-slug: 04-grouping-and-aggregates       # must equal folder name
-title: Grouping and aggregates
-summary: GROUP BY, COUNT, SUM — and why HAVING isn't WHERE.
-order: 4                                # integer; matches folder prefix
-difficulty: beginner                    # beginner | intermediate | advanced
-estimatedMinutes: 12
-tags: [group-by, aggregates, having]
+title: DELETE and row lifecycle          # required
+summary: Remove rows — and understand where they go.
+estimatedMinutes: 10                     # required — keep it honest
+tags: [delete, returning]
 authors: [your-github-handle]
-seed: seed.sql                          # relative path; default is seed.sql
-checks: []                              # optional, see below
+seed: seed.sql                           # default: seed.sql
+checks: []                               # optional, see below
 ```
 
-Keep `estimatedMinutes` honest — short, hands-on lessons are the goal.
+Difficulty lives on the module, not the lesson.
 
-## `lesson.mdx`
+### `module.yaml`
 
-Plain Markdown plus a tiny set of components.
+Only needed when creating a brand-new module:
 
-### `<Run>` — a runnable SQL block
+```yaml
+title: Changing data
+difficulty: beginner                     # beginner | intermediate | advanced
+summary: INSERT, UPDATE, DELETE — and getting data back out with RETURNING.
+```
 
-Wrap SQL you want learners to execute in their sandbox. In an interactive
-session there's a "Run" button; in the preview it renders as a styled block.
+## Writing `lesson.mdx`
+
+Plain Markdown plus two components:
+
+- **`<Run>`** — SQL the learner executes in their sandbox with one click.
+- **`<Check id="…">`** — a checkpoint; references a check declared in
+  `lesson.yaml`. The body is the learner-facing instruction.
+- Plain fenced blocks (```` ```sql ````) render as read-only snippets — use
+  them for SQL the learner reads but shouldn't run.
 
 ````mdx
+Count the seeded rows:
+
 <Run>
 SELECT count(*) FROM users;
 </Run>
+
+<Check id="ten-users">
+You should see **10** users.
+</Check>
 ````
 
-### `<Check id="…">` — an optional checkpoint
+### Escaping inside `<Run>` and `<Check>` — read this
 
-References a check declared in `lesson.yaml` by `id`. The body is the learner-facing description.
+Block contents are parsed as **JSX**, so some perfectly valid SQL breaks the
+MDX compile or, worse, silently changes meaning. The backslashes below are
+stripped at render time — the learner always sees and runs clean SQL.
 
-```mdx
-<Check id="seed-loaded">
-Run a `SELECT count(*) FROM users` and you should see **10**.
-</Check>
-```
+- Escape every `{` and `}` as `\{` and `\}`. This bites on jsonb and array
+  literals:
 
-If you reference an `id` that's not in `lesson.yaml`, the validator fails.
+  ```
+  SELECT '\{"a": 1\}'::jsonb;
+  SELECT '\{1,2,3\}'::int[];
+  ```
 
-### Fenced code blocks
+- Escape every `<` as `\<` — so `\<=`, `\<>`, `\<@`, `\<->`. The `>` character
+  needs **no** escaping (`->`, `->>`, `#>`, `@>` are all fine as-is).
 
-Triple-backtick code blocks (```` ```sql … ``` ````) render as styled,
-non-runnable blocks — use these for snippets the learner reads but doesn't
-execute. Use `<Run>` when you want them to actually run it.
+- **No `--` line comments inside `<Run>`.** The runner flattens the block to a
+  single line, so a `--` comment swallows the rest of the statement. Put
+  commentary in the surrounding prose instead.
 
-## Checks (`lesson.yaml`)
+- A lone `*` (as in `count(*)`) needs no escaping. If a block contains **two or
+  more** `*` characters, MDX can pair them up as emphasis — escape each one as
+  `\*`.
 
-Checks are **optional**. Add them when you can verify an objective state of
-the learner's Postgres branch — not "did they type the right query," because
-queries are stateless and we can't observe them. Three types:
+- If a block is *supposed* to fail (demonstrating an error), say so in the
+  sentence leading into it — an unannounced failing block reads as a bug in
+  the lesson.
 
-> **For SELECT-only lessons, skip checks entirely.** Read-only queries don't
-> change state, so a state-based check on a SELECT lesson always passes the
-> moment the branch is provisioned — misleading UX. Add checks once your
-> lesson involves a DML or DDL exercise the learner is expected to perform.
+To check your work, run `npm run lessons:validate` and `npm run build`, or
+just open the lesson in the dev server (`/lessons/<slug>`).
 
-### `query-returns` — run SQL, compare result
+## `seed.sql`
+
+Runs once against a fresh branch to build the lesson's world. Assume:
+
+- An **empty `public` schema**.
+- A **regular role** — no `SUPERUSER`, and **no `CREATE EXTENSION`**. Stick to
+  core Postgres: `gen_random_uuid()`, built-in full-text search, etc.
+  (`pg_trgm`, `btree_gist`, `uuid-ossp` are out of scope.)
+
+Seeds run **once into a per-lesson template branch** at deploy time; learners
+get instant copy-on-write forks. That means big tables are essentially free at
+lesson-open time — the indexing lessons seed millions of rows via
+`generate_series` so plan differences are visible in `EXPLAIN ANALYZE`. Keep
+the *file* small (generate data, don't paste it), and remember that anything
+the learner is asked to build themselves — like `CREATE INDEX` on a huge
+table — runs per-learner and costs real time.
+
+For most lessons, a handful of themed rows is still the right size.
+
+## Checks
+
+Checks are optional and only make sense when the lesson asks the learner to
+**change state** (DML/DDL) that we can verify afterwards. Queries themselves
+are stateless — we can't observe "did they type the right SELECT" — so
+**SELECT-only lessons should ship `checks: []`** rather than a checkpoint that
+auto-passes.
+
+Three types:
 
 ```yaml
-- id: seed-loaded
+# query-returns — run SQL, compare the result
+- id: orders-archived
   type: query-returns
-  description: Confirm the seed loaded 10 users.
-  sql: SELECT count(*) FROM users
+  description: Archive the 3 cancelled orders.
+  sql: SELECT count(*) FROM orders_archive
   expect:
     rowCount: 1
-    rows: [[10]]
-```
+    rows: [[3]]
 
-Order-sensitive. If row order isn't deterministic in your check, include an
-explicit `ORDER BY` in the `sql`.
-
-### `row-count` — assert a table has N rows
-
-```yaml
-- id: ten-orders-inserted
+# row-count — assert a table has exactly N rows
+- id: ten-orders
   type: row-count
-  description: Insert 10 rows into the orders table.
+  description: Insert 10 orders.
   table: orders
   expect:
     rowCount: 10
-```
 
-### `schema-state` — assert a column exists with a given type
-
-```yaml
+# schema-state — assert a column exists with a given type
 - id: has-is-active
   type: schema-state
-  description: The users table has an is_active boolean.
+  description: Add an is_active boolean to users.
   table: users
   column: is_active
   columnType: boolean
 ```
 
-> Auto-checking runs in Phase 4. Until then, `<Check>` components render as
-> informational placeholders.
+Two tips:
 
-## `seed.sql`
+- `query-returns` comparisons are order-sensitive — include an `ORDER BY` if
+  row order isn't deterministic.
+- `query-returns` can query the catalogs, which makes almost anything
+  checkable. To verify "the learner created an index on `user_id`" without
+  depending on what they named it:
 
-Plain SQL that runs once against a fresh branch when the learner opens the
-lesson. Assume:
+  ```sql
+  SELECT count(*) FROM pg_indexes
+  WHERE tablename = 'events' AND indexdef ILIKE '%(user_id)%'
+  ```
 
-- An empty `public` schema.
-- A regular user role — no `SUPERUSER`, no `CREATE EXTENSION` calls.
-- Idempotency isn't required (the branch starts empty) but is welcome.
+## Writing style
 
-Keep seeds small and themed to the lesson. A handful of rows is almost always
-enough; 100k-row seeds slow branch creation for no learning benefit.
-
-## Local development
-
-```bash
-npm install
-cp .env.example .env.local           # then edit secrets
-npm run db:migrate                   # one-time, against your Postgres
-npm run dev
-```
-
-Visit:
-- <http://localhost:3000/lessons> for the catalog
-- <http://localhost:3000/lessons/<slug>/preview> for a read-only render
-
-The interactive `/lessons/<slug>` route requires sign-in. Branch creation and
-the web shell aren't wired yet — they land in Phases 2 and 3.
-
-## What CI checks
-
-On every PR:
-- `tsc --noEmit` — types
-- `eslint` — lint
-- `npm run lessons:validate` — YAML schema, slug/folder match, seed exists,
-  Check IDs in MDX exist in YAML
-- `next build` — full MDX compile of every lesson
-
-## Tone
-
-- **Show, don't tell.** Drop them into the query, then explain.
+- **Show, don't tell.** Drop them into the query, then explain what they saw.
 - **Short paragraphs.** A learner should be able to skim and still pick up the
   shape of the lesson.
-- **One concept per lesson.** If you find yourself writing "next, an unrelated
-  thing…" split into a follow-up lesson.
-- **Be specific about cost and behavior** — Postgres lessons are most useful
-  when they explain *why* something is the right tool, not just *that* it is.
+- **One concept per lesson.** If you're writing "next, an unrelated thing…",
+  split it into a follow-up lesson.
+- **Be specific about cost and behavior.** The best Postgres lessons explain
+  *why* something is the right tool, not just *that* it is.
+
+## Pull requests
+
+- Branch from `main`; for lessons, `lesson/<slug>` is the convention.
+- One lesson (or one focused fix) per PR.
+- CI must pass — it runs `tsc --noEmit`, `eslint`,
+  `npm run lessons:validate`, and a full `next build`.
+- Add your GitHub handle to `authors` in any lesson you meaningfully improve.
+
+For app code: this repo tracks a newer Next.js than most tutorials (and
+coding-agent training data) assume — conventions may differ from what you
+know. The bundled docs in `node_modules/next/dist/docs/` are the source of
+truth, and `AGENTS.md` points coding agents at them.
+
+## License
+
+By contributing you agree that your contributions are licensed under the
+project's [Apache 2.0 license](./LICENSE).
