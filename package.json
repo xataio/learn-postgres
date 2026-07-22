@@ -27,7 +27,7 @@
     "next-mdx-remote": "^6.0.0",
     "pg": "^8.22.0",
     "react": "19.2.8",
-    "react-dom": "19.2.7",
+    "react-dom": "19.2.8",
     "remark-gfm": "^4.0.1",
     "server-only": "^0.0.1",
     "ws": "^8.21.1",
