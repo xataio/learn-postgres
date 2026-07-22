@@ -154,7 +154,7 @@ contributions are welcome too.
 
 ## License
 
-[Apache 2.0](./LICENSE)
+This project is licensed under the Apache License 2.0 - see the [LICENSE](LICENSE) file for details.
 
 <br>
 <p align="right">Made with :heart: by <a href="https://xata.io">Xata 🦋</a></p>
