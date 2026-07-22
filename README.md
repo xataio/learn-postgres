@@ -155,3 +155,6 @@ contributions are welcome too.
 ## License
 
 [Apache 2.0](./LICENSE)
+
+<br>
+<p align="right">Made with :heart: by <a href="https://xata.io">Xata 🦋</a></p>
