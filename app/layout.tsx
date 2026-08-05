@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import { PoweredByXata } from "@/components/PoweredByXata";
+import { SITE_URL } from "@/lib/site";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -15,11 +16,19 @@ const geistMono = Geist_Mono({
 
 export const metadata: Metadata = {
   // Resolves the og:image/twitter:image URLs emitted by the opengraph-image
-  // routes to absolute URLs. Without it Next falls back to the deployment URL,
-  // which is the preview origin on Vercel previews.
-  metadataBase: process.env.NEXT_PUBLIC_APP_URL
-    ? new URL(process.env.NEXT_PUBLIC_APP_URL)
-    : undefined,
+  // routes to absolute URLs. Production is pinned to the canonical domain so
+  // cards never point at the vercel.app alias; previews fall back to
+  // NEXT_PUBLIC_APP_URL or the deployment URL.
+  metadataBase:
+    process.env.VERCEL_ENV === "production"
+      ? new URL(SITE_URL)
+      : process.env.NEXT_PUBLIC_APP_URL
+        ? new URL(process.env.NEXT_PUBLIC_APP_URL)
+        : undefined,
+  // Resolved against the current route, so every page asserts itself as the
+  // original on the canonical host.
+  alternates: { canonical: "./" },
+  openGraph: { url: "./", siteName: "Learn Postgres" },
   title: "Learn Postgres",
   description: "Short, hands-on Postgres lessons in real disposable databases.",
 };
