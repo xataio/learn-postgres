@@ -39,7 +39,7 @@
     "@tailwindcss/typography": "^0.5.20",
     "@types/js-yaml": "^4.0.9",
     "@types/node": "^26",
-    "@types/pg": "^8.20.3",
+    "@types/pg": "^8.20.4",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.1",
