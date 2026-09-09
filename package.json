@@ -34,7 +34,7 @@
     "zod": "^4.5.4"
   },
   "devDependencies": {
-    "@eslint/compat": "^2.1.0",
+    "@eslint/compat": "^2.1.1",
     "@tailwindcss/postcss": "^4",
     "@tailwindcss/typography": "^0.5.20",
     "@types/js-yaml": "^4.0.9",
