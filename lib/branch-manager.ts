@@ -1,11 +1,13 @@
 import "server-only";
 import { createHash } from "node:crypto";
 import { and, asc, eq, isNotNull, lt } from "drizzle-orm";
-import { db } from "@/lib/db";
 import { userBranch } from "@/db/schema";
+import { db } from "@/lib/db";
 import { getAllLessons, type Lesson } from "@/lib/lessons";
+import { enforceRate } from "@/lib/rate-limit";
+import { acquireClient, dropPool } from "@/lib/shell/pool-cache";
+import { templateBranchName } from "@/lib/templates";
 import {
-  XataApiError,
   awaitConnectionString,
   createBranch,
   deleteBranch,
@@ -13,10 +15,9 @@ import {
   getTemplateBranchId,
   listBranches,
   resolveBranchDsn,
+  XataApiError,
+  type XataBranch,
 } from "@/lib/xata";
-import { templateBranchName } from "@/lib/templates";
-import { acquireClient, dropPool } from "@/lib/shell/pool-cache";
-import { enforceRate } from "@/lib/rate-limit";
 
 export type UserBranchRow = typeof userBranch.$inferSelect;
 
@@ -71,8 +72,9 @@ async function enforceBranchQuota(userId: string): Promise<void> {
     console.log(
       `[quota] user=${shortUserId(userId)} evicting ${row.xataBranchName} (lesson=${row.lessonSlug})`,
     );
-    if (row.connectionString) await dropPool(row.connectionString).catch(() => { });
-    await deleteBranch(row.xataBranchId).catch(() => { });
+    if (row.connectionString)
+      await dropPool(row.connectionString).catch(() => {});
+    await deleteBranch(row.xataBranchId).catch(() => {});
     await db
       .delete(userBranch)
       .where(
@@ -110,7 +112,10 @@ async function createBranchWith409Retry(input: {
   } catch (err) {
     if (err instanceof XataApiError && err.status === 409) {
       const altSuffix = Math.random().toString(36).slice(2, 8);
-      return await createBranch({ ...input, name: `${input.name}-${altSuffix}` });
+      return await createBranch({
+        ...input,
+        name: `${input.name}-${altSuffix}`,
+      });
     }
     throw err;
   }
@@ -157,9 +162,7 @@ async function healMissingConnectionString(
       ),
     )
     .returning();
-  console.log(
-    `[heal] row repaired for branch ${row.xataBranchId}`,
-  );
+  console.log(`[heal] row repaired for branch ${row.xataBranchId}`);
   return updated;
 }
 
@@ -171,10 +174,7 @@ async function findExisting(
     .select()
     .from(userBranch)
     .where(
-      and(
-        eq(userBranch.userId, userId),
-        eq(userBranch.lessonSlug, lessonSlug),
-      ),
+      and(eq(userBranch.userId, userId), eq(userBranch.lessonSlug, lessonSlug)),
     )
     .limit(1);
   return rows[0];
@@ -185,10 +185,7 @@ async function touchLastUsed(userId: string, lessonSlug: string) {
     .update(userBranch)
     .set({ lastUsedAt: new Date() })
     .where(
-      and(
-        eq(userBranch.userId, userId),
-        eq(userBranch.lessonSlug, lessonSlug),
-      ),
+      and(eq(userBranch.userId, userId), eq(userBranch.lessonSlug, lessonSlug)),
     );
 }
 
@@ -222,11 +219,14 @@ function isRetryableSeedError(err: unknown): boolean {
 function describeErr(err: unknown): string {
   if (!err || typeof err !== "object") return String(err);
   const e = err as { message?: unknown; code?: unknown; name?: unknown };
-  const msg = typeof e.message === "string" && e.message ? e.message : "<no msg>";
-  const code = typeof e.code === "string" || typeof e.code === "number"
-    ? ` code=${e.code}`
-    : "";
-  const name = typeof e.name === "string" && e.name !== "Error" ? `${e.name}: ` : "";
+  const msg =
+    typeof e.message === "string" && e.message ? e.message : "<no msg>";
+  const code =
+    typeof e.code === "string" || typeof e.code === "number"
+      ? ` code=${e.code}`
+      : "";
+  const name =
+    typeof e.name === "string" && e.name !== "Error" ? `${e.name}: ` : "";
   return `${name}${msg}${code}`;
 }
 
@@ -276,14 +276,12 @@ async function runSeed(
       console.warn(
         `[seed] attempt ${attempt} failed (${describeErr(err)}) — dropping pool and retrying`,
       );
-      await dropPool(dsn).catch(() => { });
+      await dropPool(dsn).catch(() => {});
       const wait = Math.min(500 * 2 ** (attempt - 1), 4_000, left);
       await new Promise((r) => setTimeout(r, wait));
     }
   }
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(String(lastError));
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 /**
@@ -357,7 +355,7 @@ export async function ensureBranchForLesson(
   const skipSeed = templateId !== null;
 
   const name = buildBranchName(userId, lesson.meta.slug);
-  let branch;
+  let branch: XataBranch;
   try {
     branch = await createBranchWith409Retry({
       name,
@@ -384,7 +382,7 @@ export async function ensureBranchForLesson(
     console.error(
       `${tag} await-connection-string failed for ${branch.id}: ${(err as Error).message}`,
     );
-    await deleteBranch(branch.id).catch(() => { });
+    await deleteBranch(branch.id).catch(() => {});
     throw err;
   }
 
@@ -395,7 +393,7 @@ export async function ensureBranchForLesson(
     console.error(
       `${tag} resolve-dsn failed for ${branch.id}: ${(err as Error).message}`,
     );
-    await deleteBranch(branch.id).catch(() => { });
+    await deleteBranch(branch.id).catch(() => {});
     throw err;
   }
 
@@ -406,7 +404,7 @@ export async function ensureBranchForLesson(
       console.error(
         `${tag} seed failed for ${branch.id} dsn=${maskDsn(dsn)}: ${(err as Error).message}`,
       );
-      await deleteBranch(branch.id).catch(() => { });
+      await deleteBranch(branch.id).catch(() => {});
       throw new Error(
         `Seed for ${lesson.meta.slug} failed: ${(err as Error).message}`,
       );
@@ -428,7 +426,7 @@ export async function ensureBranchForLesson(
     return row;
   } catch (err) {
     // Concurrent request already inserted; drop ours and reuse theirs.
-    await deleteBranch(branch.id).catch(() => { });
+    await deleteBranch(branch.id).catch(() => {});
     const existingAfterRace = await findExisting(userId, lesson.meta.slug);
     if (existingAfterRace) return existingAfterRace;
     throw err;
@@ -447,14 +445,11 @@ export async function dropBranchForLesson(
   if (!row) return;
 
   if (row.connectionString) await dropPool(row.connectionString);
-  await deleteBranch(row.xataBranchId).catch(() => { });
+  await deleteBranch(row.xataBranchId).catch(() => {});
   await db
     .delete(userBranch)
     .where(
-      and(
-        eq(userBranch.userId, userId),
-        eq(userBranch.lessonSlug, lessonSlug),
-      ),
+      and(eq(userBranch.userId, userId), eq(userBranch.lessonSlug, lessonSlug)),
     );
 }
 

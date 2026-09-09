@@ -216,7 +216,8 @@ export function buildBranchDsn(
   const url = new URL(connectionString);
   url.username = creds.username;
   url.password = creds.password;
-  if (!url.searchParams.has("sslmode")) url.searchParams.set("sslmode", "require");
+  if (!url.searchParams.has("sslmode"))
+    url.searchParams.set("sslmode", "require");
   return url.toString();
 }
 
@@ -225,9 +226,7 @@ export function buildBranchDsn(
  * just a template without auth. Xata sometimes hands you a complete DSN at
  * create time; when it does, there's no need for a second /credentials call.
  */
-export function readCredentialsFromDsn(
-  dsn: string,
-): XataCredentials | null {
+export function readCredentialsFromDsn(dsn: string): XataCredentials | null {
   try {
     const url = new URL(dsn);
     if (url.username && url.password) {
@@ -261,7 +260,7 @@ export async function awaitConnectionString(
     const remaining = deadline - Date.now();
     const wait = Math.min(500 + 500 * attempt, 3000, remaining);
     await new Promise((r) => setTimeout(r, wait));
-    let updated;
+    let updated: XataBranch;
     try {
       updated = await getBranch(branchId);
     } catch (err) {

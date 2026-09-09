@@ -1,5 +1,5 @@
 import "server-only";
-import { Pool, neonConfig, type PoolClient } from "@neondatabase/serverless";
+import { neonConfig, Pool, type PoolClient } from "@neondatabase/serverless";
 import ws from "ws";
 
 /**
@@ -53,7 +53,7 @@ function evictOldest(): void {
   if (oldestKey) {
     const victim = pools.get(oldestKey);
     pools.delete(oldestKey);
-    victim?.pool.end().catch(() => { });
+    victim?.pool.end().catch(() => {});
   }
 }
 
@@ -147,9 +147,7 @@ export async function acquireClient(
     try {
       const client = await pool.connect();
       if (attempt > 1) {
-        console.log(
-          `[pg-pool] ${host} acquired after ${attempt} attempt(s)`,
-        );
+        console.log(`[pg-pool] ${host} acquired after ${attempt} attempt(s)`);
       }
       return client;
     } catch (err) {
@@ -166,14 +164,12 @@ export async function acquireClient(
   console.error(
     `[pg-pool] ${host} gave up after ${attempt} attempt(s) in ${timeoutMs}ms: ${formatPoolError(lastError)}`,
   );
-  throw lastError instanceof Error
-    ? lastError
-    : new Error(String(lastError));
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 export async function dropPool(dsn: string): Promise<void> {
   const entry = pools.get(dsn);
   if (!entry) return;
   pools.delete(dsn);
-  await entry.pool.end().catch(() => { });
+  await entry.pool.end().catch(() => {});
 }

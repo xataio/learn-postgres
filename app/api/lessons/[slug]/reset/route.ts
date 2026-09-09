@@ -1,9 +1,9 @@
+import { revalidatePath } from "next/cache";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
-import { getLesson } from "@/lib/lessons";
 import { resetBranchForLesson } from "@/lib/branch-manager";
+import { getLesson } from "@/lib/lessons";
 import { RateLimitError } from "@/lib/rate-limit";
 
 type Ctx = { params: Promise<{ slug: string }> };

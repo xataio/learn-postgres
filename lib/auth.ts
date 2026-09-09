@@ -1,8 +1,8 @@
 import { betterAuth } from "better-auth";
 import { drizzleAdapter } from "better-auth/adapters/drizzle";
 import { oAuthProxy } from "better-auth/plugins";
-import { db } from "@/lib/db";
 import * as schema from "@/db/schema";
+import { db } from "@/lib/db";
 
 export const auth = betterAuth({
   // Lets every Vercel preview deployment reuse the single GitHub OAuth app

@@ -22,9 +22,7 @@ export async function SandboxSection({
 }) {
   // Anonymous visitors can read the lesson but don't get a Xata branch.
   if (!userId) {
-    return (
-      <SandboxSignInPrompt callbackURL={`/lessons/${lesson.meta.slug}`} />
-    );
+    return <SandboxSignInPrompt callbackURL={`/lessons/${lesson.meta.slug}`} />;
   }
 
   if (

@@ -29,9 +29,7 @@ export type RateLimitResult = {
 export class RateLimitError extends Error {
   readonly retryAfterSeconds: number;
   constructor(retryAfterSeconds: number, message?: string) {
-    super(
-      message ?? `Rate limited — retry in ${retryAfterSeconds}s.`,
-    );
+    super(message ?? `Rate limited — retry in ${retryAfterSeconds}s.`);
     this.name = "RateLimitError";
     this.retryAfterSeconds = retryAfterSeconds;
   }

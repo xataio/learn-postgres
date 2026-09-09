@@ -61,7 +61,10 @@ function formatBlock(
 
   // Header
   lines.push(
-    headers.map((h, i) => ` ${padRight(h, widths[i])} `).join("|").replace(/\s+$/, ""),
+    headers
+      .map((h, i) => ` ${padRight(h, widths[i])} `)
+      .join("|")
+      .replace(/\s+$/, ""),
   );
   // Separator
   lines.push(widths.map((w) => "-".repeat(w + 2)).join("+"));
@@ -69,7 +72,9 @@ function formatBlock(
   for (const r of cells) {
     const line = r
       .map((v, i) => {
-        const aligned = isNumberLike(v) ? padLeft(v, widths[i]) : padRight(v, widths[i]);
+        const aligned = isNumberLike(v)
+          ? padLeft(v, widths[i])
+          : padRight(v, widths[i]);
         return ` ${aligned} `;
       })
       .join("|")
@@ -95,9 +100,12 @@ export function formatQueryResult(result: QueryResult): string {
 
   if (!result.ok) {
     lines.push(`${ANSI.red}ERROR:${ANSI.reset} ${result.error}`);
-    if (result.detail) lines.push(`${ANSI.dim}DETAIL: ${result.detail}${ANSI.reset}`);
-    if (result.hint) lines.push(`${ANSI.dim}HINT:   ${result.hint}${ANSI.reset}`);
-    if (result.code) lines.push(`${ANSI.dim}CODE:   ${result.code}${ANSI.reset}`);
+    if (result.detail)
+      lines.push(`${ANSI.dim}DETAIL: ${result.detail}${ANSI.reset}`);
+    if (result.hint)
+      lines.push(`${ANSI.dim}HINT:   ${result.hint}${ANSI.reset}`);
+    if (result.code)
+      lines.push(`${ANSI.dim}CODE:   ${result.code}${ANSI.reset}`);
     return lines.join("\r\n") + "\r\n";
   }
 

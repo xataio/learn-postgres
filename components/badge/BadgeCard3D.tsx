@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type PointerEvent, type ReactNode } from "react";
+import { type PointerEvent, type ReactNode, useRef } from "react";
 
 /**
  * Tilts its children toward the cursor with a moving glare highlight. Writes

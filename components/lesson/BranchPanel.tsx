@@ -1,6 +1,4 @@
-type Props =
-  | { kind: "unconfigured" }
-  | { kind: "error"; message: string };
+type Props = { kind: "unconfigured" } | { kind: "error"; message: string };
 
 export function BranchPanel(props: Props) {
   if (props.kind === "unconfigured") {

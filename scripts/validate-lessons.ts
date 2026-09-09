@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+
 /**
  * Validates every lesson under /lessons:
  *   - the module/lesson folder tree is well-formed (names, uniqueness, module.yaml)
@@ -14,12 +15,12 @@
  * Exits non-zero on any failure. Designed for CI.
  */
 
-import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { load } from "js-yaml";
-import { lessonFileSchema } from "../lib/lesson-schema";
 import { discoverLessons, type LessonEntry } from "../lib/lesson-discovery";
+import { type LessonFile, lessonFileSchema } from "../lib/lesson-schema";
 
 type Result = { slug: string; ok: boolean; errors: string[] };
 
@@ -34,7 +35,7 @@ async function validateOne(entry: LessonEntry): Promise<Result> {
   if (!existsSync(mdxPath)) errors.push("missing lesson.mdx");
   if (errors.length) return { slug, ok: false, errors };
 
-  let meta;
+  let meta: LessonFile;
   try {
     meta = lessonFileSchema.parse(load(await readFile(yamlPath, "utf8")));
   } catch (err) {

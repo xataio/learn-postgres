@@ -29,7 +29,12 @@ export async function ogFonts() {
     { name: "Geist Mono", data: monoSemiBold, weight: 600, style: "normal" },
     { name: "Geist", data: sansRegular, weight: 400, style: "normal" },
     { name: "Geist", data: sansMedium, weight: 500, style: "normal" },
-  ] as { name: string; data: Buffer; weight: 400 | 500 | 600; style: "normal" }[];
+  ] as {
+    name: string;
+    data: Buffer;
+    weight: 400 | 500 | 600;
+    style: "normal";
+  }[];
 }
 
 // Mirrors the DIFFICULTY_TONE pills on the lessons dashboard (light mode).
@@ -72,7 +77,8 @@ export function OgWindow({
         height: "100%",
         display: "flex",
         padding: "44px 52px",
-        background: "linear-gradient(135deg, #fafafa 0%, #f4f4f5 55%, #d9f3e7 100%)",
+        background:
+          "linear-gradient(135deg, #fafafa 0%, #f4f4f5 55%, #d9f3e7 100%)",
         fontFamily: "Geist",
       }}
     >
@@ -157,7 +163,7 @@ export function OgPill({
 // Geist has no U+2713 glyph (it renders as tofu), so checkmarks are drawn.
 export function OgCheck({ size, color }: { size: number; color: string }) {
   return (
-    <svg width={size} height={size} viewBox="0 0 24 24">
+    <svg aria-hidden="true" width={size} height={size} viewBox="0 0 24 24">
       <path
         d="M5 13l4 4 10-11"
         stroke={color}

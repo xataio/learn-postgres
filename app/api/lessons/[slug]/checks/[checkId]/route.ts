@@ -1,12 +1,12 @@
+import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
-import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
 import { userBranch } from "@/db/schema";
-import { getLesson } from "@/lib/lessons";
+import { auth } from "@/lib/auth";
 import { runCheck } from "@/lib/checks";
+import { db } from "@/lib/db";
 import { markCheckPassed } from "@/lib/lesson-progress";
+import { getLesson } from "@/lib/lessons";
 
 type Ctx = { params: Promise<{ slug: string; checkId: string }> };
 
@@ -39,11 +39,10 @@ export async function POST(_req: Request, ctx: Ctx) {
     )
     .limit(1);
   const branch = rows[0];
-  if (!branch || !branch.connectionString) {
+  if (!branch?.connectionString) {
     return NextResponse.json(
       {
-        error:
-          "No sandbox for this lesson — refresh the page to prepare one.",
+        error: "No sandbox for this lesson — refresh the page to prepare one.",
       },
       { status: 409 },
     );

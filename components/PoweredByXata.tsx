@@ -14,6 +14,7 @@ export function PoweredByXata() {
         <span>Powered by</span>
 
         <svg
+          aria-hidden="true"
           width="60"
           height="14"
           viewBox="0 0 412 99"

@@ -1,11 +1,11 @@
+import { and, eq } from "drizzle-orm";
 import { headers } from "next/headers";
 import { NextResponse } from "next/server";
-import { and, eq } from "drizzle-orm";
+import { userBranch } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { db } from "@/lib/db";
-import { userBranch } from "@/db/schema";
-import { runQuery } from "@/lib/shell/query-runner";
 import { checkRate } from "@/lib/rate-limit";
+import { runQuery } from "@/lib/shell/query-runner";
 
 const QUERY_RATE_LIMIT = Number(process.env.QUERY_RATE_LIMIT ?? 30);
 const QUERY_RATE_WINDOW_MS = Number(process.env.QUERY_RATE_WINDOW_MS ?? 10_000);
@@ -92,8 +92,7 @@ export async function POST(req: Request, ctx: Ctx) {
   }
 
   // touch last_used_at non-blocking
-  db
-    .update(userBranch)
+  db.update(userBranch)
     .set({ lastUsedAt: new Date() })
     .where(
       and(

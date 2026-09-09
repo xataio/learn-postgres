@@ -1,12 +1,12 @@
 "use server";
 
-import { headers } from "next/headers";
-import { revalidatePath } from "next/cache";
 import { eq } from "drizzle-orm";
-import { auth } from "@/lib/auth";
-import { db } from "@/lib/db";
+import { revalidatePath } from "next/cache";
+import { headers } from "next/headers";
 import { badgeShare } from "@/db/schema";
+import { auth } from "@/lib/auth";
 import { newShareToken } from "@/lib/badge-share";
+import { db } from "@/lib/db";
 import { enforceRate } from "@/lib/rate-limit";
 
 async function requireUserId(): Promise<string> {

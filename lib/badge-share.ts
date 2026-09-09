@@ -1,11 +1,11 @@
 import "server-only";
 import { randomBytes } from "node:crypto";
-import { cache } from "react";
 import { and, eq } from "drizzle-orm";
-import { db } from "@/lib/db";
+import { cache } from "react";
 import { badgeShare, user } from "@/db/schema";
-import { getModules } from "@/lib/lessons";
+import { db } from "@/lib/db";
 import { getProgressCounts } from "@/lib/lesson-progress";
+import { getModules } from "@/lib/lessons";
 
 export function newShareToken(): string {
   // 192 bits, URL-safe — unguessable enough to act as the only access control

@@ -32,7 +32,11 @@ export const checkSchema = z.discriminatedUnion("type", [
   }),
 ]);
 
-export const difficultySchema = z.enum(["beginner", "intermediate", "advanced"]);
+export const difficultySchema = z.enum([
+  "beginner",
+  "intermediate",
+  "advanced",
+]);
 
 // Editorial fields authored in lesson.yaml. `slug` and `order` are NOT here —
 // they are derived from the lesson's folder name (the single source of truth).

@@ -1,9 +1,9 @@
 import type { Metadata } from "next";
 import Link from "next/link";
 import { notFound } from "next/navigation";
-import { getBadgeByToken } from "@/lib/badge-share";
 import { BadgeCard3D } from "@/components/badge/BadgeCard3D";
 import { ForceLightTheme } from "@/components/badge/ForceLightTheme";
+import { getBadgeByToken } from "@/lib/badge-share";
 
 // Without this the route could be rendered once and cached, serving a badge
 // after its owner disabled sharing. Force a per-request DB lookup.
@@ -53,7 +53,7 @@ export default async function BadgePage({
           <div className="flex items-center gap-4">
             <div className="relative shrink-0">
               {badge.image ? (
-                // eslint-disable-next-line @next/next/no-img-element
+                // biome-ignore lint/performance/noImgElement: Remote OAuth avatars cannot use Next image optimization safely.
                 <img
                   src={badge.image}
                   alt=""

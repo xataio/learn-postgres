@@ -1,5 +1,5 @@
 import "server-only";
-import type { PoolClient } from "@neondatabase/serverless";
+import type { PoolClient, QueryArrayResult } from "@neondatabase/serverless";
 import type { Check } from "@/lib/lesson-schema";
 import { acquireClient } from "@/lib/shell/pool-cache";
 
@@ -44,7 +44,7 @@ async function checkQueryReturns(
   check: Extract<Check, { type: "query-returns" }>,
 ): Promise<CheckResult> {
   return withClient(dsn, async (client) => {
-    let result;
+    let result: QueryArrayResult;
     try {
       result = await client.query({ text: check.sql, rowMode: "array" });
     } catch (err) {
@@ -52,13 +52,19 @@ async function checkQueryReturns(
     }
 
     const rows = result.rows ?? [];
-    if (check.expect.rowCount !== undefined && rows.length !== check.expect.rowCount) {
+    if (
+      check.expect.rowCount !== undefined &&
+      rows.length !== check.expect.rowCount
+    ) {
       return {
         pass: false,
         reason: `Expected ${check.expect.rowCount} row(s), got ${rows.length}.`,
       };
     }
-    if (check.expect.rows !== undefined && !rowsMatch(rows, check.expect.rows)) {
+    if (
+      check.expect.rows !== undefined &&
+      !rowsMatch(rows, check.expect.rows)
+    ) {
       return {
         pass: false,
         reason: "Returned rows didn't match the expected values.",

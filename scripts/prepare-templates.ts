@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+
 /**
  * Deploy-time template preparation.
  *
@@ -23,14 +24,14 @@
  * optionally, XATA_PARENT_BRANCH (defaults to "main").
  */
 
-import { config } from "dotenv";
-import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
+import { config } from "dotenv";
 import { load } from "js-yaml";
 import { Client } from "pg";
-import { lessonFileSchema } from "../lib/lesson-schema";
 import { discoverLessons } from "../lib/lesson-discovery";
+import { lessonFileSchema } from "../lib/lesson-schema";
 import { templateBranchName } from "../lib/templates";
 import {
   awaitConnectionString,
@@ -61,8 +62,11 @@ async function loadLessonSeeds(): Promise<LessonSeed[]> {
     if (!existsSync(yamlPath)) throw new Error(`${slug}: missing lesson.yaml`);
     const meta = lessonFileSchema.parse(load(await readFile(yamlPath, "utf8")));
     const seedPath = join(dir, meta.seed);
-    const seedSql = existsSync(seedPath) ? await readFile(seedPath, "utf8") : "";
-    if (!seedSql.trim()) throw new Error(`${slug}: seed "${meta.seed}" is empty`);
+    const seedSql = existsSync(seedPath)
+      ? await readFile(seedPath, "utf8")
+      : "";
+    if (!seedSql.trim())
+      throw new Error(`${slug}: seed "${meta.seed}" is empty`);
     lessons.push({ slug, seedSql });
   }
   return lessons.sort((a, b) => a.slug.localeCompare(b.slug));
@@ -106,7 +110,7 @@ async function upgradeBranchImages(
     parent = await getBranch(parentId);
     const parentImage = parent.configuration?.image;
     const current = parentImage ? parseImage(parentImage) : null;
-    if (!current) {
+    if (!parentImage || !current) {
       console.warn(
         `  ! parent image "${parentImage}" is missing or unparsable — skipping Postgres upgrades`,
       );
@@ -122,7 +126,7 @@ async function upgradeBranchImages(
       console.log(`Postgres image ${parentImage} is the latest available.`);
       // The parent is current, but templates created before an earlier upgrade
       // may still lag — fall through and check them too.
-      latest = { ...current, name: parentImage! };
+      latest = { ...current, name: parentImage };
     }
   } catch (err) {
     console.warn(
@@ -147,7 +151,9 @@ async function upgradeBranchImages(
         cur.major !== latest.major ||
         cur.minor >= latest.minor
       ) {
-        console.warn(`  ! ${detail.name}: ${image} not upgradable to ${latest.name} — skipping`);
+        console.warn(
+          `  ! ${detail.name}: ${image} not upgradable to ${latest.name} — skipping`,
+        );
         continue;
       }
       console.log(`  ^ ${detail.name}: ${image} → ${latest.name}`);
@@ -195,7 +201,9 @@ async function seedTemplate(dsn: string, seedSql: string): Promise<void> {
       const left = deadline - Date.now();
       if (left <= 0) break;
       console.warn(`    attempt ${attempt} failed (${msg}) — retrying`);
-      await new Promise((r) => setTimeout(r, Math.min(1000 * attempt, 5000, left)));
+      await new Promise((r) =>
+        setTimeout(r, Math.min(1000 * attempt, 5000, left)),
+      );
     }
   }
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
