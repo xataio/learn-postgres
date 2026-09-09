@@ -23,7 +23,7 @@
     "better-auth": "^1.7.2",
     "drizzle-orm": "^0.45.2",
     "js-yaml": "^5.4.1",
-    "next": "16.3.3",
+    "next": "16.3.4",
     "next-mdx-remote": "^6.0.0",
     "pg": "^8.23.0",
     "react": "19.2.8",
