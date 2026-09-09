@@ -1,0 +1,37 @@
+name: Dependabot auto-merge
+
+# This workflow never checks out or executes pull-request code. It only reads
+# Dependabot's signed metadata and enables GitHub's native, CI-gated auto-merge.
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  enable-auto-merge:
+    if: >-
+      github.event.pull_request.user.login == 'dependabot[bot]' &&
+      github.repository == 'xataio/learn-postgres'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Read Dependabot metadata
+        id: metadata
+        uses: dependabot/fetch-metadata@25dd0e34f4fe68f24cc83900b1fe3fe149efef98 # v3
+
+      - name: Enable auto-merge for eligible updates
+        if: >-
+          (steps.metadata.outputs.dependency-group == 'security-updates' &&
+            steps.metadata.outputs.update-type != 'version-update:semver-major') ||
+          (steps.metadata.outputs.dependency-type == 'direct:development' &&
+            (steps.metadata.outputs.update-type == 'version-update:semver-minor' ||
+             steps.metadata.outputs.update-type == 'version-update:semver-patch')) ||
+          ((steps.metadata.outputs.dependency-type == 'direct:production' ||
+            steps.metadata.outputs.dependency-type == 'indirect') &&
+            steps.metadata.outputs.update-type == 'version-update:semver-patch')
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_URL: ${{ github.event.pull_request.html_url }}
+        run: gh pr merge --auto --squash "$PR_URL"

@@ -1,13 +1,46 @@
-# To get started with Dependabot version updates, you'll need to specify which
-# package ecosystems to update and where the package manifests are located.
-# Please see the documentation for all configuration options:
-# https://docs.github.com/code-security/dependabot/dependabot-version-updates/configuration-options-for-the-dependabot.yml-file
-
 version: 2
 updates:
-  - package-ecosystem: "npm"
-    # Look for `package.json` and `lock` files in the `root` directory
+  - package-ecosystem: npm
     directory: "/"
-    # Check the npm registry for updates every day (weekdays)
     schedule:
       interval: "daily"
+    groups:
+      # Security fixes stay separate from routine version updates. Patch and
+      # minor security groups are eligible for auto-merge after CI passes.
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+      # Keep framework packages in sync, especially next and
+      # eslint-config-next, which normally release matching versions.
+      framework:
+        patterns:
+          - next
+          - eslint-config-next
+          - react
+          - react-dom
+          - "@types/react"
+          - "@types/react-dom"
+        update-types:
+          - minor
+          - patch
+
+      development-dependencies:
+        dependency-type: development
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+      production-dependencies:
+        dependency-type: production
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
