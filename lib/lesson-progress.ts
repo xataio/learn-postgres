@@ -1,7 +1,7 @@
 import "server-only";
 import { and, eq } from "drizzle-orm";
-import { db } from "@/lib/db";
 import { lessonProgress } from "@/db/schema";
+import { db } from "@/lib/db";
 
 export async function getPassedCheckIds(
   userId: string,

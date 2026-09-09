@@ -1,20 +1,21 @@
-import Link from "next/link";
 import { headers } from "next/headers";
-import { auth } from "@/lib/auth";
-import { getModules } from "@/lib/lessons";
-import { getProgressCounts } from "@/lib/lesson-progress";
-import { getShareForUser } from "@/lib/badge-share";
-import { SignOutButton } from "./sign-out-button";
+import Link from "next/link";
 import { SignInButton } from "@/app/sign-in-button";
-import { ShareProgressCard } from "./share-progress-card";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { auth } from "@/lib/auth";
+import { getShareForUser } from "@/lib/badge-share";
+import { getProgressCounts } from "@/lib/lesson-progress";
+import { getModules } from "@/lib/lessons";
+import { ShareProgressCard } from "./share-progress-card";
+import { SignOutButton } from "./sign-out-button";
 
 type Bucket = "continue" | "completed" | "available";
 
 type Progress = { passed: number; total: number; bucket: Bucket };
 
 const PILL_TONE: Record<Bucket, string> = {
-  continue: "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
+  continue:
+    "bg-amber-50 text-amber-700 dark:bg-amber-950/40 dark:text-amber-300",
   completed:
     "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
   available: "bg-zinc-100 text-zinc-700 dark:bg-zinc-800 dark:text-zinc-300",
@@ -23,8 +24,7 @@ const PILL_TONE: Record<Bucket, string> = {
 const DIFFICULTY_TONE: Record<string, string> = {
   beginner:
     "bg-emerald-50 text-emerald-700 dark:bg-emerald-950/40 dark:text-emerald-300",
-  intermediate:
-    "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300",
+  intermediate: "bg-sky-50 text-sky-700 dark:bg-sky-950/40 dark:text-sky-300",
   advanced: "bg-rose-50 text-rose-700 dark:bg-rose-950/40 dark:text-rose-300",
 };
 
@@ -103,7 +103,8 @@ export default async function DashboardPage() {
                 {completedCount === 1 ? "lesson" : "lessons"}
                 {startedCount > 0 ? (
                   <>
-                    {" "}and have{" "}
+                    {" "}
+                    and have{" "}
                     <strong className="font-semibold">{startedCount}</strong> in
                     progress.
                   </>
@@ -145,7 +146,11 @@ export default async function DashboardPage() {
               {lessons.map((lesson) => {
                 const { passed, total, bucket } = stateBySlug.get(
                   lesson.meta.slug,
-                )!;
+                ) ?? {
+                  passed: 0,
+                  total: lesson.meta.checks.length,
+                  bucket: "available" as const,
+                };
                 return (
                   <li key={lesson.meta.slug}>
                     <Link

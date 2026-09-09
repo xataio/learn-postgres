@@ -50,6 +50,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        {/* biome-ignore lint/security/noDangerouslySetInnerHtml: Static theme bootstrap with no user-controlled input. */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
         {children}
         <PoweredByXata />

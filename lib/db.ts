@@ -15,9 +15,10 @@ function createPool(): Pool {
   return new Pool({ connectionString, max: 5 });
 }
 
-export const pool: Pool = globalForDb.pool ?? (globalForDb.pool = createPool());
+if (!globalForDb.pool) globalForDb.pool = createPool();
+export const pool: Pool = globalForDb.pool;
 
-export const db =
-  globalForDb.db ?? (globalForDb.db = drizzle(pool, { schema }));
+if (!globalForDb.db) globalForDb.db = drizzle(pool, { schema });
+export const db = globalForDb.db;
 
 export type DB = typeof db;

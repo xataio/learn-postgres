@@ -1,7 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { useState, useTransition } from "react";
 import { Terminal } from "@/components/shell/Terminal";
 
 type Props = {

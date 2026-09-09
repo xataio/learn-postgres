@@ -44,3 +44,23 @@ updates:
         update-types:
           - minor
           - patch
+
+  - package-ecosystem: github-actions
+    directory: "/"
+    schedule:
+      interval: "daily"
+    groups:
+      security-updates:
+        applies-to: security-updates
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch
+
+      github-actions:
+        patterns:
+          - "*"
+        update-types:
+          - minor
+          - patch

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { SignInButton } from "@/app/sign-in-button";
 import type { Check } from "@/lib/lesson-schema";
 
@@ -70,7 +70,11 @@ export function CheckCard({
       <div
         className={`flex items-center gap-2 text-xs font-medium uppercase tracking-wide ${styles.heading}`}
       >
-        {status === "running" ? <Spinner /> : <span aria-hidden>{styles.icon}</span>}
+        {status === "running" ? (
+          <Spinner />
+        ) : (
+          <span aria-hidden>{styles.icon}</span>
+        )}
         <span>{styles.label}</span>
         {check && (
           <code className="ml-1 font-mono text-[10px] opacity-70">
@@ -105,7 +109,11 @@ export function CheckCard({
                   : "Check"}
             </button>
           ) : (
-            <SignInButton variant="inline" callbackURL={callbackURL} preserveScroll>
+            <SignInButton
+              variant="inline"
+              callbackURL={callbackURL}
+              preserveScroll
+            >
               Sign in to check
             </SignInButton>
           )}
@@ -148,7 +156,6 @@ function stylesFor(status: Status): StatusStyle {
         icon: "•",
         label: "Checking",
       };
-    case "idle":
     default:
       return {
         frame:

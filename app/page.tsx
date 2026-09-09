@@ -24,8 +24,8 @@ export default function Home() {
         </div>
 
         <p className="mt-12 text-sm text-zinc-500">
-          Open source. Lessons live in <code className="font-mono">/lessons</code>{" "}
-          — contributions welcome.
+          Open source. Lessons live in{" "}
+          <code className="font-mono">/lessons</code> — contributions welcome.
         </p>
       </main>
     </div>

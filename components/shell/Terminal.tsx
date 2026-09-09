@@ -2,26 +2,27 @@
 
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
-import { Readline } from "./readline";
-import { clearHistory, loadHistory, pushHistory } from "./history";
-import { expandMeta, META_COMMANDS } from "./meta";
-import type { MetaResult } from "./meta";
+import type { QueryResult, ResultBlock } from "@/lib/shell/types";
+import type { DescribeItem } from "./format";
 import {
   formatClientError,
   formatClientMessage,
   formatDescribe,
   formatQueryResult,
 } from "./format";
-import type { DescribeItem } from "./format";
-import type { QueryResult, ResultBlock } from "@/lib/shell/types";
+import { clearHistory, loadHistory, pushHistory } from "./history";
+import type { MetaResult } from "./meta";
+import { expandMeta, META_COMMANDS } from "./meta";
+import { Readline } from "./readline";
 
 type DescribeMeta = Extract<MetaResult, { kind: "describe" }>;
 type FetchResult = QueryResult | { httpError: string };
 
-const BANNER = [
-  "\x1b[2mlearn-postgres shell — type \\? for help, \\d to list relations.\x1b[0m",
-  "",
-].join("\r\n") + "\r\n";
+const BANNER =
+  [
+    "\x1b[2mlearn-postgres shell — type \\? for help, \\d to list relations.\x1b[0m",
+    "",
+  ].join("\r\n") + "\r\n";
 
 const TABLES_SQL = `
 SELECT c.relname

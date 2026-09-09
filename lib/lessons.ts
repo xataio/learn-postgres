@@ -1,16 +1,16 @@
 import "server-only";
-import { readFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
-import { cache } from "react";
 import { load } from "js-yaml";
+import { cache } from "react";
+import { discoverLessons, type LessonEntry } from "./lesson-discovery";
 import {
-  lessonFileSchema,
   type Check,
   type LessonMeta,
+  lessonFileSchema,
   type ModuleMeta,
 } from "./lesson-schema";
-import { discoverLessons, type LessonEntry } from "./lesson-discovery";
 
 export type Lesson = {
   meta: LessonMeta;

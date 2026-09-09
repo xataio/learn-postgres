@@ -11,6 +11,7 @@
  */
 
 import { config as loadEnv } from "dotenv";
+
 loadEnv({ path: ".env.local" });
 loadEnv({ path: ".env" });
 
@@ -39,7 +40,9 @@ async function call<T>(path: string, init: RequestInit = {}): Promise<T> {
   if (res.status === 204) return undefined as T;
   const text = await res.text();
   if (!res.ok) {
-    throw new Error(`Xata ${init.method ?? "GET"} ${path} → ${res.status}: ${text}`);
+    throw new Error(
+      `Xata ${init.method ?? "GET"} ${path} → ${res.status}: ${text}`,
+    );
   }
   return text ? (JSON.parse(text) as T) : (undefined as T);
 }
@@ -72,9 +75,7 @@ async function main() {
   const keep = (b: Branch) =>
     (parent && b.id === parent.id) || b.name.startsWith("tpl-");
 
-  console.log(
-    `Project ${projectId} has ${branches.length} branch(es).\n`,
-  );
+  console.log(`Project ${projectId} has ${branches.length} branch(es).\n`);
   for (const b of branches) {
     const tag = keep(b) ? "  KEEP" : "DELETE";
     console.log(

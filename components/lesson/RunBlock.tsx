@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, type ReactNode } from "react";
+import { type ReactNode, useRef } from "react";
 import { SignInButton } from "@/app/sign-in-button";
 
 type Props = {
@@ -34,7 +34,11 @@ export function RunBlock({ children, isSignedIn, callbackURL }: Props) {
             ▶ Run
           </button>
         ) : (
-          <SignInButton variant="inline" callbackURL={callbackURL} preserveScroll>
+          <SignInButton
+            variant="inline"
+            callbackURL={callbackURL}
+            preserveScroll
+          >
             Sign in to run
           </SignInButton>
         )}

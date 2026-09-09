@@ -1,17 +1,17 @@
-import { Suspense } from "react";
-import Link from "next/link";
 import { headers } from "next/headers";
+import Link from "next/link";
 import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
+import { Suspense } from "react";
 import remarkGfm from "remark-gfm";
-import { auth } from "@/lib/auth";
-import { getAllLessons, getLesson } from "@/lib/lessons";
 import { buildLessonComponents } from "@/components/lesson/mdx-components";
-import { SandboxSection } from "@/components/lesson/SandboxSection";
-import { SandboxLoading } from "@/components/lesson/SandboxLoading";
 import { RestoreScroll } from "@/components/lesson/RestoreScroll";
-import { getPassedCheckIds } from "@/lib/lesson-progress";
+import { SandboxLoading } from "@/components/lesson/SandboxLoading";
+import { SandboxSection } from "@/components/lesson/SandboxSection";
 import { ThemeToggle } from "@/components/ThemeToggle";
+import { auth } from "@/lib/auth";
+import { getPassedCheckIds } from "@/lib/lesson-progress";
+import { getAllLessons, getLesson } from "@/lib/lessons";
 
 type Params = { slug: string };
 
@@ -20,7 +20,11 @@ export async function generateStaticParams() {
   return lessons.map((l) => ({ slug: l.meta.slug }));
 }
 
-export async function generateMetadata({ params }: { params: Promise<Params> }) {
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<Params>;
+}) {
   const { slug } = await params;
   const lesson = await getLesson(slug);
   if (!lesson) return {};
@@ -43,14 +47,19 @@ export default async function LessonPage({
   const passedCheckIds = session
     ? await getPassedCheckIds(session.user.id, slug)
     : new Set<string>();
-  const components = buildLessonComponents({ lesson, passedCheckIds, isSignedIn });
+  const components = buildLessonComponents({
+    lesson,
+    passedCheckIds,
+    isSignedIn,
+  });
   const totalChecks = lesson.meta.checks.length;
   const passedCount = passedCheckIds.size;
 
   const allLessons = await getAllLessons();
   const idx = allLessons.findIndex((l) => l.meta.slug === slug);
   const prev = idx > 0 ? allLessons[idx - 1] : null;
-  const next = idx >= 0 && idx < allLessons.length - 1 ? allLessons[idx + 1] : null;
+  const next =
+    idx >= 0 && idx < allLessons.length - 1 ? allLessons[idx + 1] : null;
 
   return (
     <div className="px-6 py-6">
@@ -91,7 +100,11 @@ export default async function LessonPage({
 
       <div className="mt-6 grid gap-6 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
         <article className="prose prose-zinc dark:prose-invert">
-          <MDXRemote source={lesson.mdxSource} components={components} options={{ mdxOptions: { remarkPlugins: [remarkGfm] } }} />
+          <MDXRemote
+            source={lesson.mdxSource}
+            components={components}
+            options={{ mdxOptions: { remarkPlugins: [remarkGfm] } }}
+          />
 
           {(prev || next) && (
             <nav

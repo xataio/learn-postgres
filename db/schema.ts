@@ -1,9 +1,9 @@
 import {
+  boolean,
   pgTable,
+  primaryKey,
   text,
   timestamp,
-  boolean,
-  primaryKey,
 } from "drizzle-orm/pg-core";
 
 // ---------- better-auth managed tables ----------

@@ -242,7 +242,8 @@ export class Readline {
       // line. Move up onto its last visual row (it may wrap), pop it into the
       // buffer, then redraw from there.
       if (this.buffer.length === 0 && this.accumulated.length > 0) {
-        const prev = this.accumulated.pop()!;
+        const prev = this.accumulated.pop();
+        if (prev === undefined) return;
         this.buffer = prev;
         this.cursor = prev.length;
         // Clear the (single-row, empty) continuation prompt and step up onto
@@ -457,7 +458,12 @@ function splitSequences(data: string): string[] {
       i += 3;
       continue;
     }
-    if (c === "\x1b" && data[i + 1] && data[i + 1] !== "[" && data[i + 1] !== "O") {
+    if (
+      c === "\x1b" &&
+      data[i + 1] &&
+      data[i + 1] !== "[" &&
+      data[i + 1] !== "O"
+    ) {
       out.push(data.slice(i, i + 2));
       i += 2;
       continue;

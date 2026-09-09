@@ -2,15 +2,16 @@ import "server-only";
 import type { QueryArrayResult } from "pg";
 
 type PgNotice = { severity?: string; message?: string };
-import type { QueryResult, ResultBlock } from "./types";
+
 import { acquireClient } from "./pool-cache";
+import type { QueryResult, ResultBlock } from "./types";
 
 export type {
+  FieldInfo,
+  QueryErr,
+  QueryOk,
   QueryResult,
   ResultBlock,
-  FieldInfo,
-  QueryOk,
-  QueryErr,
 } from "./types";
 
 export const MAX_ROWS = 1000;
@@ -98,10 +99,7 @@ function normalize(
   });
 }
 
-export async function runQuery(
-  dsn: string,
-  sql: string,
-): Promise<QueryResult> {
+export async function runQuery(dsn: string, sql: string): Promise<QueryResult> {
   const trimmed = sql.trim();
   if (!trimmed) {
     return { ok: true, results: [], notices: [], durationMs: 0 };
@@ -109,7 +107,7 @@ export async function runQuery(
 
   const host = hostFromDsn(dsn);
   const acquireStart = Date.now();
-  let client;
+  let client: Awaited<ReturnType<typeof acquireClient>>;
   try {
     client = await acquireClient(dsn, connectTimeoutMs());
   } catch (err) {

@@ -1,4 +1,5 @@
 #!/usr/bin/env tsx
+
 /**
  * Scaffolds a new lesson inside a module:
  *   /lessons/<NN-module>/<NN-lesson>/{lesson.yaml,lesson.mdx,seed.sql}
@@ -13,10 +14,10 @@
  *   npm run new-lesson -- changing-data delete-and-lifecycle
  */
 
-import { mkdir, writeFile, readdir } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import { slugRegex, parseOrderedName } from "../lib/lesson-schema";
+import { parseOrderedName, slugRegex } from "../lib/lesson-schema";
 
 const LESSONS_DIR = join(process.cwd(), "lessons");
 
