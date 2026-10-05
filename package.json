@@ -39,7 +39,7 @@
     "zod": "^4.6.5"
   },
   "devDependencies": {
-    "@biomejs/biome": "^2.5.14",
+    "@biomejs/biome": "^2.5.15",
     "@tailwindcss/postcss": "^4",
     "@tailwindcss/typography": "^0.5.20",
     "@types/js-yaml": "^4.0.9",
@@ -48,7 +48,7 @@
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "@types/ws": "^8.18.1",
-    "dotenv": "^18.0.4",
+    "dotenv": "^18.0.5",
     "drizzle-kit": "^0.31.11",
     "tailwindcss": "^4",
     "tsx": "^4.23.15",
