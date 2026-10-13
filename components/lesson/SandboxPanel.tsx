@@ -1,8 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState, useTransition } from "react";
+import { useEffect, useRef, useState, useTransition } from "react";
 import { Terminal } from "@/components/shell/Terminal";
+import { capture } from "@/lib/analytics";
 
 type Props = {
   lessonSlug: string;
@@ -14,6 +15,13 @@ export function SandboxPanel({ lessonSlug, branchName }: Props) {
   const [fetching, setFetching] = useState(false);
   const [isPending, startTransition] = useTransition();
   const [error, setError] = useState<string | null>(null);
+  const trackedSlug = useRef<string | null>(null);
+
+  useEffect(() => {
+    if (trackedSlug.current === lessonSlug) return;
+    trackedSlug.current = lessonSlug;
+    capture("sandbox_opened", { lesson_slug: lessonSlug });
+  }, [lessonSlug]);
 
   // fetching: the POST is in flight.
   // isPending: router.refresh() is re-rendering the server tree.

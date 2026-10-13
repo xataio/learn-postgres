@@ -4,6 +4,7 @@ import { notFound } from "next/navigation";
 import { MDXRemote } from "next-mdx-remote/rsc";
 import { Suspense } from "react";
 import remarkGfm from "remark-gfm";
+import { LessonViewTracker } from "@/components/lesson/LessonViewTracker";
 import { buildLessonComponents } from "@/components/lesson/mdx-components";
 import { RestoreScroll } from "@/components/lesson/RestoreScroll";
 import { SandboxLoading } from "@/components/lesson/SandboxLoading";
@@ -64,6 +65,13 @@ export default async function LessonPage({
   return (
     <div className="px-6 py-6">
       <RestoreScroll />
+      <LessonViewTracker
+        lessonSlug={slug}
+        moduleOrder={lesson.meta.module.order}
+        isSignedIn={isSignedIn}
+        checksTotal={totalChecks}
+        checksPassed={passedCount}
+      />
       <div className="text-xs text-zinc-500">
         <Link href="/lessons" className="hover:underline">
           ← All lessons

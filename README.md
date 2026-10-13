@@ -119,6 +119,7 @@ cp .env.example .env.local
 #   BETTER_AUTH_SECRET     openssl rand -base64 32
 #   GITHUB_CLIENT_ID/SECRET  required for sign-in
 #   XATA_API_KEY / XATA_ORG_ID / XATA_PROJECT_ID   required for sandboxes
+#   NEXT_PUBLIC_POSTHOG_KEY / NEXT_PUBLIC_POSTHOG_HOST   optional analytics; unset disables PostHog
 
 # 3. Create the app tables in your metadata database
 npm run db:push

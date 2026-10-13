@@ -5,8 +5,8 @@ import { userBranch } from "@/db/schema";
 import { auth } from "@/lib/auth";
 import { runCheck } from "@/lib/checks";
 import { db } from "@/lib/db";
-import { markCheckPassed } from "@/lib/lesson-progress";
-import { getLesson } from "@/lib/lessons";
+import { getPassedCheckIds, markCheckPassed } from "@/lib/lesson-progress";
+import { getLesson, type Lesson } from "@/lib/lessons";
 
 type Ctx = { params: Promise<{ slug: string; checkId: string }> };
 
@@ -49,10 +49,31 @@ export async function POST(_req: Request, ctx: Ctx) {
   }
 
   const result = await runCheck(branch.connectionString, check);
-  if (result.pass) {
-    await markCheckPassed(session.user.id, slug, checkId).catch((err) => {
-      console.error(`[check-route] could not persist pass: ${err.message}`);
-    });
+  if (!result.pass) {
+    return NextResponse.json(result);
   }
-  return NextResponse.json(result);
+  const lessonCompleted = await recordPass(session.user.id, lesson, checkId);
+  return NextResponse.json({
+    ...result,
+    lessonCompleted,
+    checksTotal: lesson.meta.checks.length,
+  });
 }
+
+const recordPass = async (
+  userId: string,
+  lesson: Lesson,
+  checkId: string,
+): Promise<boolean> => {
+  const before = await getPassedCheckIds(userId, lesson.meta.slug).catch(
+    () => null,
+  );
+  const persisted = await markCheckPassed(userId, lesson.meta.slug, checkId)
+    .then(() => true)
+    .catch((err) => {
+      console.error(`[check-route] could not persist pass: ${err.message}`);
+      return false;
+    });
+  if (!before || !persisted || before.has(checkId)) return false;
+  return lesson.meta.checks.every((c) => c.id === checkId || before.has(c.id));
+};

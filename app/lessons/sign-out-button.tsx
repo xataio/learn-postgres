@@ -1,6 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { resetAnalytics } from "@/lib/analytics";
 import { signOut } from "@/lib/auth-client";
 
 export function SignOutButton() {
@@ -8,6 +9,7 @@ export function SignOutButton() {
 
   const onClick = async () => {
     await signOut();
+    resetAnalytics();
     router.push("/");
     router.refresh();
   };

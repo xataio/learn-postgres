@@ -2,6 +2,7 @@
 
 import { type ReactNode, useState } from "react";
 import { SignInButton } from "@/app/sign-in-button";
+import { capture } from "@/lib/analytics";
 import type { Check } from "@/lib/lesson-schema";
 
 type Status = "idle" | "running" | "pass" | "fail";
@@ -40,7 +41,7 @@ export function CheckCard({
         { method: "POST" },
       );
       const json = (await res.json()) as
-        | { pass: true }
+        | { pass: true; lessonCompleted?: boolean; checksTotal?: number }
         | { pass: false; reason: string }
         | { error: string };
       if ("error" in json) {
@@ -50,6 +51,16 @@ export function CheckCard({
       }
       if (json.pass) {
         setStatus("pass");
+        capture("check_passed", {
+          lesson_slug: lessonSlug,
+          check_id: check.id,
+        });
+        if (json.lessonCompleted) {
+          capture("lesson_completed", {
+            lesson_slug: lessonSlug,
+            checks_total: json.checksTotal ?? null,
+          });
+        }
         return;
       }
       setStatus("fail");

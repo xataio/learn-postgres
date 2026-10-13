@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import "@xterm/xterm/css/xterm.css";
+import { capture } from "@/lib/analytics";
 import type { QueryResult, ResultBlock } from "@/lib/shell/types";
 import type { DescribeItem } from "./format";
 import {
@@ -328,8 +329,15 @@ async function runOnServer(
   write: (s: string) => void,
   lessonSlug: string,
 ): Promise<void> {
+  const startedAt = performance.now();
   const result = await fetchQuery(sql, lessonSlug);
-  if ("httpError" in result) {
+  const isHttpError = "httpError" in result;
+  capture("query_executed", {
+    lesson_slug: lessonSlug,
+    success: !isHttpError && result.ok,
+    duration_ms: Math.round(performance.now() - startedAt),
+  });
+  if (isHttpError) {
     write(formatClientError(result.httpError));
     return;
   }

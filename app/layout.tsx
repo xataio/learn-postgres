@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
+import { AnalyticsIdentity } from "@/components/AnalyticsIdentity";
 import { PoweredByXata } from "@/components/PoweredByXata";
 import { SITE_URL } from "@/lib/site";
 import "./globals.css";
@@ -52,6 +53,7 @@ export default function RootLayout({
       <body className="min-h-full flex flex-col">
         {/* biome-ignore lint/security/noDangerouslySetInnerHtml: Static theme bootstrap with no user-controlled input. */}
         <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+        {process.env.NEXT_PUBLIC_POSTHOG_KEY ? <AnalyticsIdentity /> : null}
         {children}
         <PoweredByXata />
       </body>

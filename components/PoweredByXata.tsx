@@ -1,3 +1,15 @@
+"use client";
+
+import { capture } from "@/lib/analytics";
+import { XATA_HOME_URL } from "@/lib/xata-links";
+
+const onXataClick = () => {
+  capture("xata_cta_clicked", {
+    destination_url: XATA_HOME_URL,
+    placement: "powered_by_footer",
+  });
+};
+
 /**
  * Attribution badge for Xata. Per https://xata.io/brand the mark must not be
  * edited, recolored, or distorted — keep the SVG and its #8468F6 fill as-is.
@@ -6,7 +18,8 @@ export function PoweredByXata() {
   return (
     <footer className="mt-auto border-t border-black/5 px-6 py-4 text-xs text-zinc-500 dark:border-white/5">
       <a
-        href="https://xata.io"
+        href={XATA_HOME_URL}
+        onClick={onXataClick}
         target="_blank"
         rel="noopener noreferrer"
         className="mx-auto flex w-fit items-center gap-2 hover:text-zinc-700 dark:hover:text-zinc-300"

@@ -1,6 +1,7 @@
 "use client";
 
 import { type ReactNode, useState } from "react";
+import { markGithubSignInIntent } from "@/lib/analytics";
 import { signIn } from "@/lib/auth-client";
 
 type Props = {
@@ -28,6 +29,7 @@ export function SignInButton({
         String(window.scrollY),
       );
     }
+    markGithubSignInIntent(callbackURL);
     await signIn.social({ provider: "github", callbackURL });
   };
 
