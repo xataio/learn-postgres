@@ -186,11 +186,21 @@ async function writeTemplateMarker(
   client: Client,
   hash: string,
 ): Promise<void> {
-  const { rows } = await client.query<{ sql: string }>(
-    `SELECT format('COMMENT ON DATABASE %I IS %L', current_database(), $1) AS sql`,
-    [templateMarker(hash)],
-  );
-  await client.query(rows[0].sql);
+  // Marker is `lp-template:` + hex seedHash — safe to embed. Avoid $1 in
+  // format(): Postgres cannot infer the param type for variadic format args
+  // ("could not determine data type of parameter $1").
+  const marker = templateMarker(hash);
+  await client.query(`
+    DO $do$
+    BEGIN
+      EXECUTE format(
+        'COMMENT ON DATABASE %I IS %L',
+        current_database(),
+        '${marker}'
+      );
+    END
+    $do$
+  `);
 }
 
 /**
@@ -227,6 +237,10 @@ async function seedTemplate(
       lastError = err;
       await client.end().catch(() => {});
       const msg = (err as Error).message ?? String(err);
+      // Seed SQL may have partially applied; retrying DDL ("already exists")
+      // cannot recover — fail so the caller deletes the incomplete branch.
+      const code = (err as { code?: string }).code;
+      if (code === "42P07" || /already exists/i.test(msg)) throw err;
       const left = deadline - Date.now();
       if (left <= 0) break;
       console.warn(`    attempt ${attempt} failed (${msg}) — retrying`);
