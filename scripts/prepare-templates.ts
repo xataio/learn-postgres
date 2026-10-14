@@ -261,15 +261,20 @@ async function resolveExistingTemplateDsn(branch: XataBranch): Promise<string> {
   return resolveBranchDsn(branch.id, connectionString);
 }
 
+type MarkerStatus = "ok" | "stamp" | "recreate";
+
 /**
- * Confirm the template carries the expected success marker. Returns false when
- * the marker is missing or wrong (caller may delete + recreate). Throws when
- * the branch can't be reached — connection errors must not trigger delete.
+ * Inspect an existing template's success marker.
+ * - ok: marker matches — skip
+ * - stamp: marker missing/wrong but public tables exist — write marker in place
+ *   (avoids a full rebuild of already-seeded templates on first deploy)
+ * - recreate: empty (or no user tables) — delete + seed
+ * Connection errors throw (do not delete).
  */
-async function verifyTemplateMarker(
+async function inspectTemplateMarker(
   branch: XataBranch,
   hash: string,
-): Promise<boolean> {
+): Promise<MarkerStatus> {
   const dsn = await resolveExistingTemplateDsn(branch);
   const expected = templateMarker(hash);
   const deadline = Date.now() + MARKER_CHECK_TIMEOUT_MS;
@@ -284,12 +289,31 @@ async function verifyTemplateMarker(
     });
     try {
       await client.connect();
-      const { rows } = await client.query<{ comment: string | null }>(
-        `SELECT shobj_description(oid, 'pg_database') AS comment
-         FROM pg_database WHERE datname = current_database()`,
+      const { rows } = await client.query<{
+        comment: string | null;
+        tables: string;
+      }>(
+        `SELECT
+           shobj_description(d.oid, 'pg_database') AS comment,
+           (SELECT count(*)::text FROM pg_class c
+              JOIN pg_namespace n ON n.oid = c.relnamespace
+             WHERE n.nspname = 'public' AND c.relkind = 'r') AS tables
+         FROM pg_database d WHERE d.datname = current_database()`,
       );
+      const comment = rows[0]?.comment ?? null;
+      const tableCount = Number(rows[0]?.tables ?? 0);
+      if (comment === expected) {
+        await client.end();
+        return "ok";
+      }
+      // Legacy or interrupted template that already has seed data: stamp only.
+      if (tableCount > 0) {
+        await writeTemplateMarker(client, hash);
+        await client.end();
+        return "stamp";
+      }
       await client.end();
-      return rows[0]?.comment === expected;
+      return "recreate";
     } catch (err) {
       lastError = err;
       await client.end().catch(() => {});
@@ -341,8 +365,8 @@ async function main() {
   const byName = new Map(branches.map((b) => [b.name, b]));
   const existing = new Set(branches.map((b) => b.name));
 
-  // Check markers first; delete only right before recreate for that lesson.
-  const markerOk = new Map<string, boolean>();
+  // Inspect markers first; stamp or delete only as needed per lesson.
+  const markerStatus = new Map<string, MarkerStatus>();
   const toVerify = lessons.flatMap((lesson) => {
     const name = templateBranchName(lesson.slug, lesson.seedSql);
     const branch = byName.get(name);
@@ -357,27 +381,37 @@ async function main() {
     toVerify,
     MARKER_CHECK_CONCURRENCY,
     async ({ lesson, name, branch }) => {
-      markerOk.set(
-        name,
-        await verifyTemplateMarker(branch, seedHash(lesson.seedSql)),
+      const status = await inspectTemplateMarker(
+        branch,
+        seedHash(lesson.seedSql),
       );
+      markerStatus.set(name, status);
+      if (status === "stamp") {
+        console.log(`  ~ ${name} — wrote missing seed marker`);
+      }
     },
   );
 
   let created = 0;
   let skipped = 0;
+  let stamped = 0;
   for (const lesson of lessons) {
     const name = templateBranchName(lesson.slug, lesson.seedSql);
     const hash = seedHash(lesson.seedSql);
     if (existing.has(name)) {
-      if (markerOk.get(name)) {
+      const status = markerStatus.get(name);
+      if (status === "ok") {
         console.log(`  = ${name} (up-to-date)`);
         skipped++;
         continue;
       }
+      if (status === "stamp") {
+        stamped++;
+        continue;
+      }
       const stale = byName.get(name);
       if (stale) {
-        console.log(`  ! ${name} — missing or stale seed marker, deleting`);
+        console.log(`  ! ${name} — empty/unmarked template, deleting`);
         await deleteBranch(stale.id);
       }
     }
@@ -412,7 +446,9 @@ async function main() {
     }
   }
 
-  console.log(`\nTemplates ready: ${created} created, ${skipped} up-to-date.`);
+  console.log(
+    `\nTemplates ready: ${created} created, ${stamped} marker-stamped, ${skipped} up-to-date.`,
+  );
 }
 
 main().catch((err) => {
