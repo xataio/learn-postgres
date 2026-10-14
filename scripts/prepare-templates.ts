@@ -9,8 +9,11 @@
  * from `main` and seeding per request — moving seed cost off the user path and
  * letting some lessons ship much larger seeds.
  *
- * Idempotent: a template is created only if its exact-hash name is missing, so
- * unchanged seeds are skipped and changed seeds get a brand-new template.
+ * Idempotent: a template is treated as ready only if its exact-hash name
+ * exists AND carries the success marker (`COMMENT ON DATABASE` =
+ * `lp-template:<seedHash>`), so unchanged seeds are skipped, changed seeds get
+ * a brand-new template, and a prior failed seed is rebuilt instead of being
+ * skipped forever.
  *
  * Also keeps the parent and existing templates on the latest available
  * Postgres minor of the parent's current major (minor upgrades are in-place
@@ -32,10 +35,11 @@ import { load } from "js-yaml";
 import { Client } from "pg";
 import { discoverLessons } from "../lib/lesson-discovery";
 import { lessonFileSchema } from "../lib/lesson-schema";
-import { templateBranchName } from "../lib/templates";
+import { seedHash, templateBranchName } from "../lib/templates";
 import {
   awaitConnectionString,
   createBranch,
+  deleteBranch,
   getBranch,
   listAvailableImages,
   listBranches,
@@ -50,8 +54,16 @@ config({ path: ".env.local" });
 config({ path: ".env" });
 
 const SEED_TIMEOUT_MS = 5 * 60_000;
+const MARKER_PREFIX = "lp-template:";
+const MARKER_CONNECT_TIMEOUT_MS = 5_000;
+const MARKER_CHECK_TIMEOUT_MS = 30_000;
+const MARKER_CHECK_CONCURRENCY = 4;
 
 type LessonSeed = { slug: string; seedSql: string };
+
+function templateMarker(hash: string): string {
+  return `${MARKER_PREFIX}${hash}`;
+}
 
 async function loadLessonSeeds(): Promise<LessonSeed[]> {
   const entries = await discoverLessons();
@@ -170,12 +182,28 @@ async function upgradeBranchImages(
   }
 }
 
+async function writeTemplateMarker(
+  client: Client,
+  hash: string,
+): Promise<void> {
+  const { rows } = await client.query<{ sql: string }>(
+    `SELECT format('COMMENT ON DATABASE %I IS %L', current_database(), $1) AS sql`,
+    [templateMarker(hash)],
+  );
+  await client.query(rows[0].sql);
+}
+
 /**
  * Run the seed against a freshly-created template branch over plain TCP `pg`
  * (no statement_timeout cap — large seeds are the point). Retries while Xata
- * propagates the branch credentials, until the deadline.
+ * propagates the branch credentials, until the deadline. Writes the success
+ * marker as the last step so existence alone never implies a finished seed.
  */
-async function seedTemplate(dsn: string, seedSql: string): Promise<void> {
+async function seedTemplate(
+  dsn: string,
+  seedSql: string,
+  hash: string,
+): Promise<void> {
   const sql = seedSql.trim();
   const deadline = Date.now() + SEED_TIMEOUT_MS;
   let attempt = 0;
@@ -191,6 +219,7 @@ async function seedTemplate(dsn: string, seedSql: string): Promise<void> {
     try {
       await client.connect();
       await client.query(sql);
+      await writeTemplateMarker(client, hash);
       await client.end();
       if (attempt > 1) console.log(`    seeded on attempt ${attempt}`);
       return;
@@ -209,6 +238,82 @@ async function seedTemplate(dsn: string, seedSql: string): Promise<void> {
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+async function resolveExistingTemplateDsn(branch: XataBranch): Promise<string> {
+  const detail = await getBranch(branch.id);
+  const connectionString = await awaitConnectionString(
+    branch.id,
+    detail.connectionString,
+  );
+  return resolveBranchDsn(branch.id, connectionString);
+}
+
+/**
+ * Confirm the template carries the expected success marker. Returns false when
+ * the marker is missing or wrong (caller may delete + recreate). Throws when
+ * the branch can't be reached — connection errors must not trigger delete.
+ */
+async function verifyTemplateMarker(
+  branch: XataBranch,
+  hash: string,
+): Promise<boolean> {
+  const dsn = await resolveExistingTemplateDsn(branch);
+  const expected = templateMarker(hash);
+  const deadline = Date.now() + MARKER_CHECK_TIMEOUT_MS;
+  let attempt = 0;
+  let lastError: unknown;
+  while (Date.now() < deadline) {
+    attempt++;
+    const client = new Client({
+      connectionString: dsn,
+      ssl: { rejectUnauthorized: false },
+      connectionTimeoutMillis: MARKER_CONNECT_TIMEOUT_MS,
+    });
+    try {
+      await client.connect();
+      const { rows } = await client.query<{ comment: string | null }>(
+        `SELECT shobj_description(oid, 'pg_database') AS comment
+         FROM pg_database WHERE datname = current_database()`,
+      );
+      await client.end();
+      return rows[0]?.comment === expected;
+    } catch (err) {
+      lastError = err;
+      await client.end().catch(() => {});
+      const msg = (err as Error).message ?? String(err);
+      const left = deadline - Date.now();
+      if (left <= 0) break;
+      console.warn(
+        `    marker check attempt ${attempt} for ${branch.name} failed (${msg}) — retrying`,
+      );
+      await new Promise((r) =>
+        setTimeout(r, Math.min(1000 * attempt, 3000, left)),
+      );
+    }
+  }
+  throw lastError instanceof Error
+    ? lastError
+    : new Error(
+        `Could not verify seed marker for ${branch.name}: ${String(lastError)}`,
+      );
+}
+
+async function runPool<T>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<void>,
+): Promise<void> {
+  let next = 0;
+  async function worker(): Promise<void> {
+    while (next < items.length) {
+      const i = next++;
+      await fn(items[i]);
+    }
+  }
+  const n = Math.min(concurrency, items.length);
+  if (n === 0) return;
+  await Promise.all(Array.from({ length: n }, () => worker()));
+}
+
 async function main() {
   const lessons = await loadLessonSeeds();
   if (lessons.length === 0) {
@@ -219,16 +324,48 @@ async function main() {
   const branches = await listBranches();
   const parentId = resolveMainParent(branches);
   await upgradeBranchImages(parentId, branches);
+  const byName = new Map(branches.map((b) => [b.name, b]));
   const existing = new Set(branches.map((b) => b.name));
+
+  // Check markers first; delete only right before recreate for that lesson.
+  const markerOk = new Map<string, boolean>();
+  const toVerify = lessons.flatMap((lesson) => {
+    const name = templateBranchName(lesson.slug, lesson.seedSql);
+    const branch = byName.get(name);
+    return branch ? [{ lesson, name, branch }] : [];
+  });
+  if (toVerify.length > 0) {
+    console.log(
+      `Checking ${toVerify.length} existing template(s) for seed markers…`,
+    );
+  }
+  await runPool(
+    toVerify,
+    MARKER_CHECK_CONCURRENCY,
+    async ({ lesson, name, branch }) => {
+      markerOk.set(
+        name,
+        await verifyTemplateMarker(branch, seedHash(lesson.seedSql)),
+      );
+    },
+  );
 
   let created = 0;
   let skipped = 0;
   for (const lesson of lessons) {
     const name = templateBranchName(lesson.slug, lesson.seedSql);
+    const hash = seedHash(lesson.seedSql);
     if (existing.has(name)) {
-      console.log(`  = ${name} (up-to-date)`);
-      skipped++;
-      continue;
+      if (markerOk.get(name)) {
+        console.log(`  = ${name} (up-to-date)`);
+        skipped++;
+        continue;
+      }
+      const stale = byName.get(name);
+      if (stale) {
+        console.log(`  ! ${name} — missing or stale seed marker, deleting`);
+        await deleteBranch(stale.id);
+      }
     }
 
     console.log(`  + ${name} — creating from parent ${parentId}`);
@@ -237,14 +374,28 @@ async function main() {
       parentId,
       description: lesson.slug.slice(0, 50),
     });
-    const connectionString = await awaitConnectionString(
-      branch.id,
-      branch.connectionString,
-    );
-    const dsn = await resolveBranchDsn(branch.id, connectionString);
-    await seedTemplate(dsn, lesson.seedSql);
-    console.log(`    seeded ${name} (${branch.id})`);
-    created++;
+    try {
+      const connectionString = await awaitConnectionString(
+        branch.id,
+        branch.connectionString,
+      );
+      const dsn = await resolveBranchDsn(branch.id, connectionString);
+      await seedTemplate(dsn, lesson.seedSql, hash);
+      console.log(`    seeded ${name} (${branch.id})`);
+      created++;
+    } catch (err) {
+      try {
+        await deleteBranch(branch.id);
+        console.warn(
+          `  ! ${name} — create/seed failed, deleted incomplete branch`,
+        );
+      } catch (deleteErr) {
+        console.warn(
+          `  ! ${name} — failed to delete incomplete branch ${branch.id}: ${(deleteErr as Error).message}`,
+        );
+      }
+      throw err;
+    }
   }
 
   console.log(`\nTemplates ready: ${created} created, ${skipped} up-to-date.`);
