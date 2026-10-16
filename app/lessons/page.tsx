@@ -65,11 +65,13 @@ export default async function DashboardPage() {
 
   const share = session ? await getShareForUser(session.user.id) : null;
 
+  const firstLesson = modules[0]?.lessons[0];
+
   return (
     <div className="mx-auto max-w-3xl px-6 py-16">
       <header>
-        <div className="flex items-start justify-between gap-4">
-          <div>
+        <div className="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+          <div className="min-w-0">
             <h1 className="font-mono text-2xl font-semibold tracking-tight">
               {session ? `Welcome, ${session.user.name}` : "Lessons"}
             </h1>
@@ -79,7 +81,7 @@ export default async function DashboardPage() {
                 : "Short, hands-on Postgres exercises. Sign in to run them in your own sandbox and track your progress."}
             </p>
           </div>
-          <div className="flex shrink-0 items-center gap-2">
+          <div className="flex shrink-0 flex-wrap items-center gap-2">
             <ThemeToggle />
             {session ? (
               <>
@@ -94,7 +96,7 @@ export default async function DashboardPage() {
             )}
           </div>
         </div>
-        {session && (
+        {session ? (
           <p className="mt-4 text-sm text-zinc-600 dark:text-zinc-400">
             {completedCount > 0 ? (
               <>
@@ -118,11 +120,39 @@ export default async function DashboardPage() {
                 <strong className="font-semibold">{startedCount}</strong>{" "}
                 {startedCount === 1 ? "lesson" : "lessons"} in progress.
               </>
+            ) : firstLesson ? (
+              <>
+                New here? Start with{" "}
+                <Link
+                  href={`/lessons/${firstLesson.meta.slug}`}
+                  className="font-medium underline-offset-2 hover:underline"
+                >
+                  {firstLesson.meta.title}
+                </Link>
+                .
+              </>
             ) : (
               <>Pick a lesson below to begin.</>
             )}
           </p>
-        )}
+        ) : firstLesson ? (
+          <div className="mt-6 rounded-md border border-black/10 px-4 py-3 text-sm dark:border-white/10">
+            <p className="font-medium text-zinc-800 dark:text-zinc-200">
+              Start here
+            </p>
+            <p className="mt-1 text-zinc-500">
+              Begin with Module 1 —{" "}
+              <Link
+                href={`/lessons/${firstLesson.meta.slug}`}
+                className="font-medium text-zinc-800 underline-offset-2 hover:underline dark:text-zinc-200"
+              >
+                {firstLesson.meta.title}
+              </Link>{" "}
+              ({firstLesson.meta.estimatedMinutes} min). Sign in when
+              you&apos;re ready to run SQL in a live sandbox.
+            </p>
+          </div>
+        ) : null}
       </header>
 
       <div className="mt-10 space-y-10">
@@ -164,12 +194,16 @@ export default async function DashboardPage() {
                         <span className="block truncate font-mono text-sm font-medium text-zinc-800 group-hover:underline dark:text-zinc-200">
                           {lesson.meta.title}
                         </span>
-                        <div className="mt-1 flex items-center gap-2 text-xs text-zinc-500">
-                          <span>{lesson.meta.estimatedMinutes} min</span>
+                        <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-zinc-500">
+                          <span className="shrink-0">
+                            {lesson.meta.estimatedMinutes} min
+                          </span>
                           {lesson.meta.tags.length > 0 && (
                             <>
-                              <span aria-hidden>·</span>
-                              <span className="truncate">
+                              <span aria-hidden className="shrink-0">
+                                ·
+                              </span>
+                              <span className="min-w-0 break-words">
                                 {lesson.meta.tags.join(" · ")}
                               </span>
                             </>
