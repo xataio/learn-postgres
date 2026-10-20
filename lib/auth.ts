@@ -22,6 +22,12 @@ export const auth = betterAuth({
       verification: schema.verification,
     },
   }),
+  // Email/password so learners without GitHub can still get a sandbox.
+  // Verification/reset mail is intentionally off for MVP (no SMTP wired yet).
+  emailAndPassword: {
+    enabled: true,
+    minPasswordLength: 8,
+  },
   socialProviders: {
     github: {
       clientId: process.env.GITHUB_CLIENT_ID ?? "",
