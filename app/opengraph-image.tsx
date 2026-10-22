@@ -47,7 +47,7 @@ export default async function Image() {
           }}
         >
           Short, hands-on lessons in real, disposable Postgres instances. No
-          setup, no docker, no resets.
+          setup, no docker, one-click reset.
         </p>
       </div>
       <div style={{ display: "flex", gap: 14 }}>
