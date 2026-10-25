@@ -11,8 +11,7 @@ installs, no Docker, no shared sandbox.
   actually run. The prose exists to set up the next query, not the other way
   around.
 - **Real Postgres, not a simulation.** Each (user, lesson) pair gets its own
-  Postgres branch. `EXPLAIN ANALYZE` shows real plans, locks really block,
-  and mistakes have real consequences — safely.
+  Postgres branch. `EXPLAIN ANALYZE` shows real plans and mistakes have real consequences — safely.
 - **Short, focused lessons.** One concept per lesson, honest time estimates,
   skimmable prose.
 - **Open source content.** The whole course lives in [`/lessons`](./lessons)
