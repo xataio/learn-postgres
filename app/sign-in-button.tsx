@@ -1,59 +1,55 @@
 "use client";
 
-import { type ReactNode, useState } from "react";
-import { signIn } from "@/lib/auth-client";
+import Link from "next/link";
+import type { ReactNode } from "react";
 
 type Props = {
   callbackURL?: string;
   variant?: "default" | "inline";
   children?: ReactNode;
-  // Stash the current scroll offset so the destination page can restore it
-  // after the OAuth round-trip lands the user back where they were reading.
+  // Kept for call-site compatibility; scroll restore happens after /sign-in
+  // when the destination lesson page reads sessionStorage.
   preserveScroll?: boolean;
 };
 
+/**
+ * Routes to the sign-in page (email + GitHub) instead of jumping straight
+ * into GitHub OAuth — beginners without a GitHub account need a path in.
+ */
 export function SignInButton({
   callbackURL = "/lessons",
   variant = "default",
   children,
   preserveScroll = false,
 }: Props) {
-  const [loading, setLoading] = useState(false);
+  const href = `/sign-in?callbackURL=${encodeURIComponent(callbackURL)}`;
 
-  const onClick = async () => {
-    setLoading(true);
+  const onClick = () => {
     if (preserveScroll) {
-      sessionStorage.setItem(
-        `learn:scroll-restore:${callbackURL}`,
-        String(window.scrollY),
-      );
+      try {
+        sessionStorage.setItem(
+          `learn:scroll-restore:${callbackURL}`,
+          String(window.scrollY),
+        );
+      } catch {
+        // ignore
+      }
     }
-    await signIn.social({ provider: "github", callbackURL });
   };
 
   const isInline = variant === "inline";
 
   return (
-    <button
-      type="button"
+    <Link
+      href={href}
       onClick={onClick}
-      disabled={loading}
       className={
         isInline
-          ? "inline-flex items-center gap-1.5 rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] disabled:opacity-50 dark:border-white/10 dark:hover:bg-white/[.04]"
-          : "flex items-center justify-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90 disabled:opacity-50"
+          ? "inline-flex items-center gap-1.5 rounded border border-black/10 px-2 py-0.5 text-[11px] font-medium hover:bg-black/[.04] dark:border-white/10 dark:hover:bg-white/[.04]"
+          : "flex items-center justify-center gap-2 rounded-md bg-foreground px-5 py-2.5 text-sm font-medium text-background hover:opacity-90"
       }
     >
-      <svg
-        viewBox="0 0 16 16"
-        aria-hidden="true"
-        className={
-          isInline ? "h-3.5 w-3.5 fill-current" : "h-4 w-4 fill-current"
-        }
-      >
-        <path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z" />
-      </svg>
-      {loading ? "Redirecting…" : (children ?? "Sign in with GitHub")}
-    </button>
+      {children ?? "Sign in"}
+    </Link>
   );
 }
