@@ -1,6 +1,7 @@
 # Learn-Postgres — Plan
 
 ## Vision
+
 Short hands-on Postgres lessons backed by **real, disposable Postgres** (Xata branches), one per (user, lesson). Community-contributable lessons in the repo. Browser-based **psql-like terminal** as the primary interaction surface. Sign-in required.
 
 ## Architecture
@@ -27,6 +28,7 @@ Next.js server
 Each query is a **single HTTP request** — no persistent WebSocket. The "shell" is a client-side terminal emulator; the server is stateless aside from the branch registry. This keeps Vercel-deployable.
 
 ## Stack
+
 - **Next.js 15** App Router + TypeScript + React 19
 - **better-auth** — email/password + GitHub OAuth (fits OSS audience)
 - **Drizzle** over Postgres on Xata "main" for app metadata
@@ -67,7 +69,7 @@ estimatedMinutes: 10
 tags: [select, where]
 authors: [exekias]
 seed: seed.sql
-checks:                          # OPTIONAL
+checks: # OPTIONAL
   - id: count-users
     type: query-returns
     sql: SELECT count(*) FROM users
@@ -102,6 +104,7 @@ checks:                          # OPTIONAL
 5. **Post-v1 optimization** → maintain per-lesson **template branches**; user branches fork from template (instant) instead of re-seeding.
 
 ## Auth flow (better-auth)
+
 - `/sign-in` `/sign-up` — email/password + GitHub OAuth button
 - Middleware guards `/lessons/[slug]` (interactive) and `/dashboard`
 - Public: landing, catalog, `/lessons/[slug]/preview` (read-only MDX, no shell)
@@ -136,6 +139,7 @@ CONTRIBUTING.md
 ```
 
 ## OSS contribution workflow
+
 - `CONTRIBUTING.md` walks through authoring a lesson
 - `pnpm new-lesson <slug>` scaffolds the folder
 - CI runs `validate-lesson.ts`: Zod-validate YAML, run `seed.sql` against an ephemeral Postgres, compile MDX, execute every declared check against the seed
@@ -143,16 +147,17 @@ CONTRIBUTING.md
 
 ## Phased delivery (~2 weeks v1)
 
-| Phase | Scope | ~Days |
-|---|---|---|
-| 0 — Skeleton | Next.js + TS + Tailwind + Drizzle + Xata main + better-auth (email/pw + GitHub) + protected route | 1–2 |
-| 1 — Content pipeline | Lesson loader, MDX, YAML Zod schema, catalog, read-only preview, `new-lesson` script, CI validator | 2–3 |
-| 2 — Branch manager | Xata API wrapper, `user_branches` table, create-on-first-open, seed runner, reset, cleanup cron | 2 |
-| 3 — Web shell | xterm.js + client readline + history + query endpoint + psql formatter + `\d \dt \l \?` | 3–4 |
-| 4 — Optional checks | `<Check>` component, check runner, progress persistence, lesson UI | 2 |
-| 5 — Polish & launch | Landing, dashboard, rate limit, per-query `statement_timeout`, 3–5 seed lessons authored | 2 |
+| Phase                | Scope                                                                                              | ~Days |
+| -------------------- | -------------------------------------------------------------------------------------------------- | ----- |
+| 0 — Skeleton         | Next.js + TS + Tailwind + Drizzle + Xata main + better-auth (email/pw + GitHub) + protected route  | 1–2   |
+| 1 — Content pipeline | Lesson loader, MDX, YAML Zod schema, catalog, read-only preview, `new-lesson` script, CI validator | 2–3   |
+| 2 — Branch manager   | Xata API wrapper, `user_branches` table, create-on-first-open, seed runner, reset, cleanup cron    | 2     |
+| 3 — Web shell        | xterm.js + client readline + history + query endpoint + psql formatter + `\d \dt \l \?`            | 3–4   |
+| 4 — Optional checks  | `<Check>` component, check runner, progress persistence, lesson UI                                 | 2     |
+| 5 — Polish & launch  | Landing, dashboard, rate limit, per-query `statement_timeout`, 3–5 seed lessons authored           | 2     |
 
 ## Risks & open questions
+
 - **Xata branch quotas / creation rate** — spike early in Phase 2 to confirm the plan supports N branches per user with daily turnover.
 - **Query safety on user branches** — set `statement_timeout = 5s`, connect as a role without `pg_read_server_files` / `COPY FROM PROGRAM`. Branch isolation already protects other users.
 - **Connection management** — short-lived `pg.Client` per request (no per-(user,lesson) pool). Optional small LRU with idle timeout if latency demands it.
