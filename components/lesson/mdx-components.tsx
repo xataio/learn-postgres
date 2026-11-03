@@ -16,6 +16,7 @@ export function buildLessonComponents({
 }: BuildOpts) {
   const callbackURL = `/lessons/${lesson.meta.slug}`;
   return {
+    // biome-ignore lint/correctness/noComponentHookFactories: server-rendered per request; no client state to lose
     Check: ({ id, children }: { id: string; children?: ReactNode }) => {
       const check = lesson.meta.checks.find((c) => c.id === id);
       return (
@@ -30,6 +31,7 @@ export function buildLessonComponents({
         </CheckCard>
       );
     },
+    // biome-ignore lint/correctness/noComponentHookFactories: server-rendered per request; no client state to lose
     Run: ({ children }: { children: ReactNode }) => (
       <RunBlock isSignedIn={isSignedIn} callbackURL={callbackURL}>
         {children}

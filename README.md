@@ -70,7 +70,7 @@ The pieces that make it feel instant and stay cheap:
   completed statement is a single HTTP request to the query proxy. No
   WebSockets, no server-side sessions.
 - **Optional auto-checking.** Lessons can declare checks (row counts, schema
-  state, arbitrary queries) that run against *your* branch and persist to your
+  state, arbitrary queries) that run against _your_ branch and persist to your
   progress.
 - **Housekeeping.** Idle branches are dropped by a daily cron; per-user branch
   count is capped with LRU eviction; queries are rate-limited and time-boxed.
@@ -134,16 +134,16 @@ sandbox on demand.
 
 ### Useful scripts
 
-| Script                     | What it does                                      |
-| -------------------------- | ------------------------------------------------- |
-| `npm run dev`              | Next.js dev server                                |
-| `npm run build`            | Production build (also compiles every lesson)     |
-| `npm run lint`             | ESLint                                            |
-| `npm run lessons:validate` | Validate lesson YAML, structure, and check IDs    |
-| `npm run new-lesson`       | Scaffold a lesson (see CONTRIBUTING.md)           |
-| `npm run templates:prepare`| Build pre-seeded template branches (deploy-time)  |
-| `npm run db:push`          | Push the Drizzle schema to your metadata DB       |
-| `npm run db:studio`        | Browse the metadata DB in Drizzle Studio          |
+| Script                      | What it does                                     |
+| --------------------------- | ------------------------------------------------ |
+| `npm run dev`               | Next.js dev server                               |
+| `npm run build`             | Production build (also compiles every lesson)    |
+| `npm run lint`              | ESLint                                           |
+| `npm run lessons:validate`  | Validate lesson YAML, structure, and check IDs   |
+| `npm run new-lesson`        | Scaffold a lesson (see CONTRIBUTING.md)          |
+| `npm run templates:prepare` | Build pre-seeded template branches (deploy-time) |
+| `npm run db:push`           | Push the Drizzle schema to your metadata DB      |
+| `npm run db:studio`         | Browse the metadata DB in Drizzle Studio         |
 
 ## Contributing
 

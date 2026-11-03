@@ -56,13 +56,13 @@ compiles every lesson's MDX — CI runs both on every PR.
 Validated against [`lib/lesson-schema.ts`](./lib/lesson-schema.ts):
 
 ```yaml
-title: DELETE and row lifecycle          # required
+title: DELETE and row lifecycle # required
 summary: Remove rows — and understand where they go.
-estimatedMinutes: 10                     # required — keep it honest
+estimatedMinutes: 10 # required — keep it honest
 tags: [delete, returning]
 authors: [your-github-handle]
-seed: seed.sql                           # default: seed.sql
-checks: []                               # optional, see below
+seed: seed.sql # default: seed.sql
+checks: [] # optional, see below
 ```
 
 Difficulty lives on the module, not the lesson.
@@ -73,7 +73,7 @@ Only needed when creating a brand-new module:
 
 ```yaml
 title: Changing data
-difficulty: beginner                     # beginner | intermediate | advanced
+difficulty: beginner # beginner | intermediate | advanced
 summary: INSERT, UPDATE, DELETE — and getting data back out with RETURNING.
 ```
 
@@ -84,10 +84,10 @@ Plain Markdown plus two components:
 - **`<Run>`** — SQL the learner executes in their sandbox with one click.
 - **`<Check id="…">`** — a checkpoint; references a check declared in
   `lesson.yaml`. The body is the learner-facing instruction.
-- Plain fenced blocks (```` ```sql ````) render as read-only snippets — use
+- Plain fenced blocks (` ```sql `) render as read-only snippets — use
   them for SQL the learner reads but shouldn't run.
 
-````mdx
+```mdx
 Count the seeded rows:
 
 <Run>
@@ -97,7 +97,7 @@ SELECT count(*) FROM users;
 <Check id="ten-users">
 You should see **10** users.
 </Check>
-````
+```
 
 ### Escaping inside `<Run>` and `<Check>` — read this
 
@@ -124,7 +124,7 @@ stripped at render time — the learner always sees and runs clean SQL.
   more** `*` characters, MDX can pair them up as emphasis — escape each one as
   `\*`.
 
-- If a block is *supposed* to fail (demonstrating an error), say so in the
+- If a block is _supposed_ to fail (demonstrating an error), say so in the
   sentence leading into it — an unannounced failing block reads as a bug in
   the lesson.
 
@@ -144,7 +144,7 @@ Seeds run **once into a per-lesson template branch** at deploy time; learners
 get instant copy-on-write forks. That means big tables are essentially free at
 lesson-open time — the indexing lessons seed millions of rows via
 `generate_series` so plan differences are visible in `EXPLAIN ANALYZE`. Keep
-the *file* small (generate data, don't paste it), and remember that anything
+the _file_ small (generate data, don't paste it), and remember that anything
 the learner is asked to build themselves — like `CREATE INDEX` on a huge
 table — runs per-learner and costs real time.
 
@@ -208,7 +208,7 @@ Two tips:
 - **One concept per lesson.** If you're writing "next, an unrelated thing…",
   split it into a follow-up lesson.
 - **Be specific about cost and behavior.** The best Postgres lessons explain
-  *why* something is the right tool, not just *that* it is.
+  _why_ something is the right tool, not just _that_ it is.
 
 ## Pull requests
 
