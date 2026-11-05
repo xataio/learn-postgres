@@ -1,0 +1,79 @@
+---
+title: "Giving coding agents a database without risking production"
+description: "How to give coding agents a writable, realistic Postgres database without production credentials: options, Postgres guardrails and a per-run copy workflow."
+order: 4
+related: ["problems/test-data", "problems/migration-risk", "concepts/branch-native-postgres", "concepts/copy-on-write"]
+lessons:
+  - slug: "roles-and-privileges"
+    anchor: "grant a role only the privileges it needs, down to the row"
+  - slug: "transactions-basics"
+    anchor: "roll back a change on purpose"
+---
+
+Give a coding agent its own copy of the database for each task, with credentials that only reach that copy, and delete the copy when the task ends. The agent can then run migrations, write test data and run destructive queries freely, because nothing it touches is shared. Production credentials, even read-only ones, are the wrong default. They cannot test writes, and they put production data in the agent's context.
+
+## Why does a coding agent need a database at all?
+
+Because an agent that cannot run its code against a database is guessing. Agents such as Claude Code, Cursor and Codex write a migration, run the test suite, read the failure and try again. Without a database the loop stops at "the code compiles", and a human finds the broken query later.
+
+Look at the platforms that measure it. Agents already create most new databases on the platforms that publish the number, Databricks and Supabase. Each of those databases is a place an agent needed to run something.
+
+## What goes wrong when agents use a shared or production database?
+
+The risks differ from a human developer's in speed and in what the agent can see.
+
+- Destructive statements. An agent fixing a failing test may `TRUNCATE` a table to reset it, or drop and recreate a schema. On a private copy that is a reasonable move. On a shared database it deletes other people's work.
+- The wrong connection string. Agents read `.env` files and shell history. If a production `DATABASE_URL` exists anywhere the agent can read, assume it will be used at some point.
+- Data in the context window. Every row an agent selects goes into its context, and from there to the model provider. If those rows hold customer names and emails, personal data has left your system.
+- Instructions inside data. Text columns can contain anything, including sentences written to steer an agent. An agent that reads support tickets from production is reading text written by strangers.
+- Concurrency. Several agents working in parallel on one database recreate every problem in [why shared staging databases break](/problems/shared-staging), only faster.
+
+## Which approaches do teams use today?
+
+| Approach | Agent can write? | Realistic data? | Risk to production |
+|---|---|---|---|
+| No database, code only | No | No | None, and no verification either |
+| Local Docker Postgres with seed data | Yes | No | None |
+| Shared development database | Yes | Sometimes | Indirect, through drift and collisions |
+| Read-only role on production or a replica | No | Yes, unmasked | Data exposure, long queries on production |
+| Database tool or MCP server connected to production | Depends on the role | Yes, unmasked | Everything above, plus whatever the tool permits |
+| Per-run copy of an anonymized source | Yes | Yes | None, if the copy holds no raw PII |
+
+Local Docker Postgres is a sound default for small schemas. The agent gets full write access and nothing can leak. It falls short when the task depends on data shape: a slow query, a migration on a large table, a bug that only shows up for customers with 10,000 orders.
+
+The read-only production role is the most common shortcut, and it gets the trade-off backwards. It exposes the real data while still blocking the writes the agent needs to verify a migration.
+
+## Which Postgres settings limit what an agent can do?
+
+If an agent must connect to anything shared, use the controls Postgres already has, and know which ones are boundaries.
+
+```sql
+CREATE ROLE agent LOGIN PASSWORD '...';
+GRANT CONNECT ON DATABASE app TO agent;
+GRANT USAGE ON SCHEMA public TO agent;
+GRANT SELECT ON orders, products TO agent;
+ALTER ROLE agent SET statement_timeout = '15s';
+ALTER ROLE agent SET idle_in_transaction_session_timeout = '30s';
+```
+
+`GRANT` and row-level security are real boundaries. A role cannot do what it was not granted. `statement_timeout` limits the damage from a runaway query. `default_transaction_read_only` is not a boundary, because any session can turn it off with `SET`. Use it as a seatbelt, not a lock.
+
+None of this fixes the data exposure problem. A role that can `SELECT` from `customers` can send every customer row into a model's context.
+
+## What does a per-run database copy look like?
+
+Each agent task gets a database of its own:
+
+1. Create a copy from an anonymized, production-like source when the task starts.
+2. Give the agent a connection string that reaches only that copy.
+3. Let it run migrations, seed rows, drop tables and rerun tests as often as it likes.
+4. Ship the result as code, a migration file in a pull request, never as changes to a shared database.
+5. Delete the copy when the task ends, whether it succeeded or not.
+
+Branches used this way tend to be short-lived. On Xata, which publishes this site, half of all branches are deleted within about 20 minutes, and two thirds within an hour. That lifetime only works when creating a copy costs a branch rather than a restore, which is what [copy-on-write](/concepts/copy-on-write) provides and what [branch-native Postgres](/concepts/branch-native-postgres) treats as the normal case.
+
+Step 4 is the safety property. The agent's changes reach production only through the same review and CI as anyone else's, including the lock and rewrite checks in [testing schema migrations before they reach production](/problems/migration-risk).
+
+## Does the copy need masked data?
+
+Yes, if the copy comes from production. A per-run copy removes the risk of writes reaching production. It does nothing about reads. The agent still sees every row in the copy, and those rows still go to the model provider. Mask names, emails, addresses and free-text fields once, in the source the copies are made from, so every agent copy starts clean. [Production-like test data without exposing PII](/problems/test-data) covers how to do that without losing the data properties that make the copy worth having.

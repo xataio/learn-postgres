@@ -1,0 +1,92 @@
+---
+title: "Testing schema migrations before they reach production"
+description: "Why Postgres migrations pass in CI and still lock or rewrite tables in production, and how to test them against production-sized data before merge."
+order: 2
+related: ["concepts/production-like-data", "concepts/copy-on-write", "problems/shared-staging", "problems/coding-agents"]
+lessons:
+  - slug: "locking"
+    anchor: "watch an ALTER TABLE wait on a lock"
+  - slug: "ddl-and-schemas"
+    anchor: "add a NOT NULL column with a default to a table that already has rows"
+  - slug: "constraints"
+    anchor: "add a constraint that has to validate every existing row"
+---
+
+To test a schema migration properly, run it against a database with production's schema, production's data volume and production's data quirks, and measure the locks it takes and how long it holds them. A migration that passes against an empty CI database proves the SQL parses. It says almost nothing about whether the same statement will block traffic or fail on real rows.
+
+## Why do migrations that pass in CI fail in production?
+
+Because the dangerous part of a Postgres migration scales with the data, and CI databases have none. Three things go wrong in production that cannot go wrong on an empty table.
+
+Locks are held for as long as the work takes. Most `ALTER TABLE` forms take an `ACCESS EXCLUSIVE` lock, which conflicts with everything, including plain `SELECT`. On an empty table the lock lasts microseconds. On a table that has to be scanned or rewritten, it lasts as long as the scan or rewrite.
+
+Waiting for a lock blocks everyone behind you. An `ALTER TABLE` that cannot get its lock because a long transaction is reading the table sits in the lock queue. Every query that arrives after it queues behind it, even reads that would not conflict with the long transaction. A statement that would have finished in a millisecond can stall the table for as long as the oldest open transaction runs.
+
+Real rows break constraints. Adding a `UNIQUE` index fails if production has duplicates. `SET NOT NULL` fails if any row is null. Seed data was written by someone who knew the rules, so it never contains the rows that break them.
+
+## Which Postgres migrations are risky on large tables?
+
+| Change | What Postgres does | Safer pattern |
+|---|---|---|
+| `ADD COLUMN ... DEFAULT` with a constant | Metadata only since Postgres 11 | Already safe |
+| `ADD COLUMN ... DEFAULT` with a volatile function, such as `clock_timestamp()` | Rewrites the table under `ACCESS EXCLUSIVE` | Add the column without the default, backfill in batches |
+| `ALTER COLUMN ... TYPE` that is not binary-compatible | Rewrites the table and rebuilds its indexes | New column, dual writes, backfill, swap |
+| `SET NOT NULL` | Scans the whole table under `ACCESS EXCLUSIVE` | Add `CHECK (col IS NOT NULL) NOT VALID`, validate it, then `SET NOT NULL`, which skips the scan on Postgres 12 and later |
+| `ADD FOREIGN KEY` | Scans the table to validate existing rows | Add it `NOT VALID`, then `VALIDATE CONSTRAINT` |
+| `CREATE INDEX` | Blocks writes for the whole build | `CREATE INDEX CONCURRENTLY`, outside a transaction block |
+| One `UPDATE` backfilling every row | Holds row locks for the whole transaction and creates a dead tuple per row | Batches of a few thousand rows, committed separately |
+
+Two details catch teams more often than the table suggests. `CREATE INDEX CONCURRENTLY` cannot run inside a transaction block, and many migration frameworks wrap each migration in one, so the safe version fails in CI unless you opt out of the wrapper. And when a concurrent build fails partway, it leaves an `INVALID` index behind that you have to drop by hand.
+
+Static linters for Postgres migrations, such as Squawk, flag most of the patterns in this table from the SQL alone. Use one. What a linter cannot tell you is how long the safe version takes on your data, or whether your data violates the constraint.
+
+## How do you measure what a migration will do in production?
+
+Run it on a copy of production and watch three things.
+
+```sql
+-- Fail fast instead of queueing behind a long transaction
+SET lock_timeout = '2s';
+
+-- Was the table rewritten? The file node changes when it is.
+SELECT pg_relation_filenode('orders');
+ALTER TABLE orders ALTER COLUMN total TYPE numeric(12,2);
+SELECT pg_relation_filenode('orders');
+```
+
+First, wall-clock time for each statement, which is roughly how long the lock is held. Second, whether the table was rewritten, which the file node comparison above shows. Third, what is waiting. From a second session, join `pg_locks` to `pg_stat_activity` on `pid` while the migration runs, and you will see any query stuck behind it.
+
+The timings only mean something if the copy matches production in the ways that matter: row counts, index sizes, the same Postgres major version, and the same dirty data. [Production-like data](/concepts/production-like-data) covers that list. Adding concurrent load is better still, but a production-sized copy without load already catches rewrites, long scans and constraint violations.
+
+## Where can you get a production-sized copy to test against?
+
+| Option | Realism | Per-PR? | Trade-off |
+|---|---|---|---|
+| Empty database in CI | None | Yes | Catches syntax errors only |
+| Seeded database in CI | Low | Yes | Seed scripts never contain the rows that break constraints |
+| Shared staging | Medium | No | One migration at a time, and staging may already have drifted |
+| `pg_restore` from a recent dump | High | Rarely | The restore rewrites every table and rebuilds every index, so it slows as data grows |
+| Cloud snapshot restore, such as RDS | High | Rarely | A new instance per test, with its own provisioning wait |
+| Copy-on-write branch | High | Yes | Needs storage or a platform that supports block-level clones |
+
+Shared staging is where most teams test today, and it is the wrong place for this job. You can only run one migration at a time, a failed migration leaves staging in a state other people depend on, and staging's schema may already include columns from abandoned branches. [Why shared staging databases break](/problems/shared-staging) goes through those failures.
+
+The last row is what makes testing every migration before merge practical. A [copy-on-write](/concepts/copy-on-write) branch starts with all of the source's data without duplicating it, so creating one per pull request costs a branch, not a restore. The CI job creates the branch, runs the migration with `lock_timeout` set, records timings and rewrites, and deletes the branch. When it fails, you throw the copy away instead of repairing staging.
+
+## What should a migration check in CI report?
+
+Treat the report as a review artifact, posted on the pull request next to the diff:
+
+- Each statement with its duration on production-sized data.
+- Tables rewritten, by file node comparison.
+- Statements that hit `lock_timeout`.
+- Constraint or index creation that failed on existing rows.
+- The schema diff between the branch before and after the migration.
+
+This matters more as more migrations are written by coding agents, which produce plausible SQL quickly and have no memory of the last time a `SET NOT NULL` took the site down. [Giving coding agents a database without risking production](/problems/coding-agents) covers that side.
+
+## How do expand and contract migrations fit in?
+
+Expand and contract splits a breaking change into steps that are each safe on their own. Expand adds the new column or table alongside the old one. The application writes to both and a backfill copies old rows across. Contract removes the old structure once nothing reads it. Each step is a separate deploy.
+
+The pattern reduces how much can go wrong in each step. It does not remove the need to test each step against real data, because the backfill and the final constraint are exactly the statements whose cost depends on row counts.

@@ -1,0 +1,10 @@
+---
+title: "Database concepts for development teams"
+description: "Definitions development teams need to reason about per-task Postgres databases: copy-on-write, production-like data and branch-native Postgres."
+---
+
+These pages define the ideas the problem pages depend on. Each one gives a direct definition first, then the mechanics that matter when you are deciding how your team's development databases should work.
+
+[Copy-on-write](/concepts/copy-on-write) is the storage technique that makes a full database copy cheap to create, because the copy shares unchanged blocks with its source. [Production-like data](/concepts/production-like-data) sets out which properties of production a test database has to keep, such as volume, distribution and schema history, for a test result to mean anything. [Branch-native Postgres](/concepts/branch-native-postgres) describes a Postgres platform where creating an isolated, writable copy per task is a routine operation rather than a project.
+
+If you arrived here from a specific failure, the problem pages apply these concepts to real cases. [Testing schema migrations before they reach production](/problems/migration-risk) is a good example of all three at work.

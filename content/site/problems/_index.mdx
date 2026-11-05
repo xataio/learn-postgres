@@ -1,0 +1,8 @@
+---
+title: "Database problems in modern software development"
+description: "The database problems development teams hit when every developer, pull request, preview and coding agent needs its own copy: staging, migrations, test data."
+---
+
+These pages cover the failures teams run into when one development database has to serve more people, pipelines and agents than it was built for. Each page names the problem, explains why it happens in Postgres specifically, and compares the approaches teams use today with their trade-offs.
+
+The five problems are connected. A shared staging database is where most teams start, and [why shared staging databases break](/problems/shared-staging) explains the collisions and drift that come with it. That same database is usually where migrations get tested, which is why [testing schema migrations before they reach production](/problems/migration-risk) so often fails to catch locks. Preview deployments and coding agents multiply the number of environments that need a database, covered in [databases for preview environments](/problems/preview-environments) and [giving coding agents a database without risking production](/problems/coding-agents). Underneath all of them sits the data question in [production-like test data without exposing PII](/problems/test-data).
