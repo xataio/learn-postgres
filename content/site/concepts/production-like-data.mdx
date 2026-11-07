@@ -1,0 +1,62 @@
+---
+title: "Production-like data"
+description: "Production-like data keeps the properties of production that change how code and queries behave: volume, skew, dirty rows and schema state, minus the PII."
+order: 3
+related: ["problems/test-data", "problems/migration-risk", "concepts/copy-on-write", "problems/shared-staging"]
+lessons:
+  - slug: "indexes-basics"
+    anchor: "watch an index replace a sequential scan over twenty-five million rows"
+  - slug: "explain"
+    anchor: "compare estimated and actual rows in a query plan"
+  - slug: "query-optimization"
+    anchor: "see stale statistics pick a bad plan after a bulk load"
+---
+
+Production-like data is test data that keeps the properties of production that change how your code and queries behave: volume, distribution, dirty rows and schema state. It does not need production's actual values. A database with production's shape and masked names is production-like. A database with real customer names and ten rows per table is not.
+
+## Which properties make data production-like?
+
+| Property | Why it matters | What breaks without it |
+|---|---|---|
+| Volume | The planner chooses scans and joins from row counts. Migrations take time in proportion to table size. | A query that uses a sequential scan in test uses an index in production, or the reverse. A migration that took 40 ms in CI rewrites a large table under a lock. |
+| Distribution and skew | Postgres keeps most-common-value statistics per column, and plans differ for common and rare values. | The page is fast for a typical customer and times out for the one with most of the orders. |
+| Correlation between columns | The planner assumes columns are independent unless you create extended statistics. | Row estimates for multi-column filters are off by orders of magnitude, so the plan is wrong. |
+| Dirty and legacy rows | Real data has nulls where the code assumes values, duplicates, odd encodings and rows from old application versions. | `SET NOT NULL` fails, a unique index cannot be built, a parser throws on a row from 2019. |
+| Schema state | Same migrations, indexes, extensions, Postgres major version and collations as production. | A migration passes because test already has the column, or a sort order differs because the collation does. |
+| Statistics | Plans are only as good as the statistics `ANALYZE` collected. | A freshly loaded test database plans from missing statistics and behaves like neither production nor a tuned system. |
+
+The first two rows cause most of the surprises. They are also the two that seed scripts and synthetic generators handle worst, which is the argument made in [production-like test data without exposing PII](/problems/test-data).
+
+## Why does data volume change query plans?
+
+Because Postgres uses a cost-based planner. For every query it estimates how many rows each step returns, prices the alternatives, and picks the cheapest. On a 50-row table a sequential scan is the cheapest option for almost anything, so test databases rarely use the indexes production depends on. On 25 million rows, the same query with the same index takes a different path.
+
+The result is that `EXPLAIN` output from a small database tells you very little about production. If a pull request adds a query, the plan worth reviewing is the one from a database with production's row counts and statistics.
+
+## Is a copy of production automatically production-like?
+
+At the moment of copying, mostly. Over time, no. A copy starts drifting the day it is made: production gains rows, migrations land, distributions shift. A staging database refreshed quarterly is production-like for a week. [Why shared staging databases break](/problems/shared-staging) covers how that drift accumulates.
+
+How you copy also matters. A `pg_dump` and `pg_restore` produces fresh tables with no bloat and indexes built in one pass. A physical copy, such as a [copy-on-write](/concepts/copy-on-write) clone of the storage, keeps the source's pages, bloat and planner statistics as they are. For plan and migration testing, the physical copy is closer to production.
+
+## How do you check that a test database is production-like?
+
+Compare the two directly. Row counts and per-column statistics are the quickest signals:
+
+```sql
+SELECT relname, reltuples::bigint AS est_rows
+FROM pg_class
+WHERE relkind = 'r' AND relnamespace = 'public'::regnamespace
+ORDER BY reltuples DESC
+LIMIT 20;
+
+SELECT attname, n_distinct, null_frac, most_common_freqs[1:3]
+FROM pg_stats
+WHERE schemaname = 'public' AND tablename = 'orders';
+```
+
+Run both on production and on the test database. If the largest tables differ by an order of magnitude, or `null_frac` is zero in test and 0.3 in production, the test database will not reproduce production behavior. Then compare `EXPLAIN` output for your five slowest production queries. Same plan shape means the data is close enough for the job.
+
+## Does production-like data include personal data?
+
+It should not. Names, emails, addresses and free text carry personal data, and the properties in the table above survive good masking: masked emails can stay unique, masked names can keep realistic lengths, and null rates do not change. The practical setup is one masked copy of production, kept up to date, from which every test database is made. That source is what makes [testing schema migrations before they reach production](/problems/migration-risk) meaningful without putting customer data in every developer's hands.

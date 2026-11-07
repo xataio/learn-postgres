@@ -1,0 +1,72 @@
+---
+title: "Databases for preview environments"
+description: "How to give every preview deployment its own database: shared, seeded, restored or branched, plus the lifecycle, migration and connection details that bite."
+order: 3
+related: ["problems/shared-staging", "problems/migration-risk", "concepts/copy-on-write", "problems/test-data"]
+---
+
+A preview environment needs its own database when the pull request it previews changes the schema or writes data, which is most of the time. The common setup, where every preview deployment points at one shared database, isolates the code and shares the state, so previews collide the same way a shared staging database does. The working alternative is a database per preview, created when the pull request opens, migrated on every push and deleted when it closes.
+
+## Why do preview deployments share one database by default?
+
+Because preview platforms isolate code, not data. Vercel, Netlify, Render and similar platforms build each pull request into its own URL with its own runtime. The database connection string comes from an environment variable, and the easiest value to put there is the one that already exists: staging.
+
+That works until two pull requests touch the schema. Preview A runs its migration during the build and adds a column. Preview B, built from a branch without that migration, now runs against a schema it does not know. Whichever deploys last wins, and reviewers on the other preview see errors that have nothing to do with the change they are reviewing. [Why shared staging databases break](/problems/shared-staging) covers the same failure at team scale.
+
+The number of previews keeps rising with the number of pull requests. GitHub's Octoverse counted 518.7 million merged pull requests in 2025, up 29% year on year, on public repositories alone. A setup that tolerated a few concurrent previews has to handle many more.
+
+## What are the options for a preview environment database?
+
+| Option | Isolation | Data reviewers see | Setup cost per preview | Main risk |
+|---|---|---|---|---|
+| Shared staging database | None | Whatever staging holds | None | Previews break each other's schema |
+| Empty database plus seed script | Full | Seed data only | Provision plus seed | Reviewers judge UI against ten fake rows |
+| Container Postgres in the preview runtime | Full | Seed data only | Fast, but stateless | Data disappears on restart, many platforms cannot run it |
+| Restore from a dump or cloud snapshot | Full | Production-like | A full restore per preview | Restore time and a full instance per open pull request |
+| Copy-on-write branch of a production-like source | Full | Production-like | One branch | Requires a platform or storage layer with block-level clones |
+
+Seed scripts deserve a fair hearing. For a small app with a stable schema, a fresh seeded database per preview is cheap, isolated and good enough. They fall short when reviewers need realistic data to judge the change: a pagination bug that only shows past 10,000 rows, a slow page that is fast on 50 rows, a layout that breaks on a 200-character company name. [Production-like test data without exposing PII](/problems/test-data) covers how to get that realism safely.
+
+Restores give realism, but each one copies every byte. [Copy-on-write](/concepts/copy-on-write) changes that cost, which is why branches are the only row in the table that stays practical when every pull request gets a preview.
+
+## What does the database lifecycle for a preview look like?
+
+Tie the database to the pull request. Deployments happen on every push, and the database should survive them.
+
+```yaml
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, closed]
+
+jobs:
+  preview-db:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - if: github.event.action == 'opened' || github.event.action == 'reopened'
+        run: ./scripts/db-copy create "pr-${{ github.event.number }}"
+      - if: github.event.action != 'closed'
+        run: ./scripts/db-copy migrate "pr-${{ github.event.number }}"
+      - if: github.event.action == 'closed'
+        run: ./scripts/db-copy delete "pr-${{ github.event.number }}"
+```
+
+`db-copy` stands for whatever your setup uses to create, migrate and delete a database: a restore script, a managed branching CLI, or `createdb` against a template. The steps matter more than the tool.
+
+1. On open, create the database from a production-like source and record its connection string where the preview build can read it.
+2. On every push, run the branch's pending migrations before the preview build starts.
+3. On close or merge, delete the database. Add a nightly job that deletes any preview database whose pull request is no longer open, because webhooks get missed.
+
+## What breaks when previews run migrations?
+
+Rewritten migrations. During review, people edit migration files that have already run on the preview database. The migration tool sees the version as applied and skips the new content, so the preview now runs on a schema that matches neither the old file nor the new one. The fix is a reset. Recreate the preview database from the source and replay the branch's migrations. That is only routine if creating a database is cheap.
+
+Slow migrations show up here first. A preview database built from production-sized data is the earliest point where a migration that rewrites a large table becomes visible, often days before merge. [Testing schema migrations before they reach production](/problems/migration-risk) covers how to turn that into a CI check rather than a surprise during review.
+
+## How many connections do preview databases need?
+
+More than you expect. Preview deployments on function-based platforms open a connection per concurrent invocation, and Postgres defaults to `max_connections = 100`. Put a connection pooler such as PgBouncer in front of each preview database, or use one your platform provides, and keep the pool small. Previews get light traffic, but an unpooled preview can still run out of connections when a burst of functions starts at once.
+
+## When is one shared preview database still fine?
+
+When no pull request changes the schema and previews are read-only demos of front-end work. Some teams run that way and split later. The moment migrations start running in preview builds, give each preview its own database. Previews that share a database cannot safely run a different schema each.

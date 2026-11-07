@@ -1,0 +1,22 @@
+---
+title: "A database for every developer, PR and agent"
+description: "database.tech teaches development teams how to give every developer, pull request, preview and coding agent its own production-like Postgres database."
+---
+
+database.tech is an education site about the development database, the one your team uses everywhere except production. That covers laptops, CI jobs, preview deployments, staging and the sandboxes coding agents work in. Every page here works on one question. How do you give each developer, pull request, preview and agent its own production-like database without putting production at risk?
+
+Most teams answer with whatever was set up years ago. One shared staging database, a seed script nobody fully trusts, and a `pg_dump` that someone runs when things get bad enough. That setup was built for a handful of engineers merging a few changes a day. It strains when every pull request gets a preview deployment and coding agents open branches of their own.
+
+## What is on this site?
+
+The site has three parts.
+
+The problems section covers the failures teams hit with their current setup. Shared staging databases that drift and collide, migrations that pass in CI and lock a table in production, previews with no data behind them, agents that need write access, and test data that is either fake or full of customer records. Start with [why shared staging databases break](/problems/shared-staging) if you are not sure which one you have.
+
+The concepts section defines the ideas the problem pages rely on. [Copy-on-write](/concepts/copy-on-write) explains how a database copy can exist without copying the bytes, [production-like data](/concepts/production-like-data) pins down what "realistic" has to mean for tests to be worth running, and [branch-native Postgres](/concepts/branch-native-postgres) names the kind of platform that treats per-task copies as the normal case.
+
+The third part, learn.database.tech, is hands-on. It is an open-source Postgres course of 43 lessons, and each signed-in learner gets a disposable Postgres database of their own for every lesson, so locks really block and mistakes cost nothing. Problem and concept pages here link to the lessons that let you try the idea on your own copy, such as watching an `ALTER TABLE` wait on a lock.
+
+## Who is it for?
+
+Backend and platform engineers who already know SQL and run Postgres in production, and the leads deciding how their team's development databases should work. We skip what Postgres is and spend the words on the parts that break.
