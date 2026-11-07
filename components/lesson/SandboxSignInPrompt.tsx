@@ -18,12 +18,22 @@ export function SandboxSignInPrompt({ callbackURL }: { callbackURL: string }) {
         <div className="flex h-full w-full items-center justify-center rounded-lg border border-black/10 bg-[#09090b] dark:border-white/10">
           <div className="flex max-w-xs flex-col items-center gap-4 px-6 text-center">
             <p className="text-sm text-zinc-400">
-              Sign in to spin up your own Postgres sandbox and run the queries
-              for this lesson.
+              Sign in with email or GitHub to spin up your own Postgres sandbox
+              and run the queries for this lesson.
             </p>
             <SignInButton callbackURL={callbackURL} preserveScroll>
               Sign in to start the sandbox
             </SignInButton>
+            <p className="text-xs text-zinc-500">
+              No GitHub?{" "}
+              <a
+                href={`/sign-up?callbackURL=${encodeURIComponent(callbackURL)}`}
+                className="underline-offset-2 hover:underline"
+              >
+                Create an account with email
+              </a>
+              .
+            </p>
           </div>
         </div>
       </div>

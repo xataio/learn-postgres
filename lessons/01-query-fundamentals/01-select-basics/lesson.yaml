@@ -9,9 +9,11 @@ authors:
   - exekias
 seed: seed.sql
 checks:
-  - id: seed-loaded
-    type: row-count
-    description: The seeded users table has 10 rows — click to mark this lesson done.
-    table: users
+  - id: count-active-users
+    type: query-returns
+    description: Count how many users are active — proves you can filter with WHERE.
+    sql: SELECT count(*)::int FROM users WHERE is_active = true
     expect:
-      rowCount: 10
+      rowCount: 1
+      rows:
+        - [7]
