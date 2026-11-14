@@ -1,0 +1,70 @@
+---
+title: "Why shared staging databases break"
+description: "Why a shared staging database causes collisions, drift and deploy queues, the alternatives teams use today, and what changes with one database per change."
+order: 1
+related: ["problems/migration-risk", "problems/preview-environments", "concepts/copy-on-write", "concepts/production-like-data"]
+lessons:
+  - slug: "mvcc-and-isolation"
+    anchor: "see what two sessions writing the same rows actually observe"
+---
+
+A shared staging database breaks because one mutable database is serving many people, branches and pipelines at the same time. Every write one of them makes becomes part of everyone else's test, and every migration applied for one branch changes the schema for all of them. The problem is structural. More discipline in the team channel delays it but does not fix it.
+
+## What goes wrong when a whole team shares one staging database?
+
+The first symptom is flaky results that nobody can reproduce. A QA run fails because a teammate's test deleted the user it expected to find. An integration test passes on Tuesday and fails on Wednesday because a background job from another branch rewrote half the `orders` table overnight. The code did not change. The data under it did.
+
+The second symptom is the schema. Your branch adds a `NOT NULL` column and you deploy it to staging to test. Now every other branch running against staging talks to a schema it has never seen, and the app built from `main` starts failing on inserts. Someone reverts your migration by hand, or you do, and the database now holds a state that no migration file describes.
+
+The third symptom is a queue. Once people learn that two migrations on staging at once causes trouble, they start taking turns. "Staging is mine until 3pm" in a chat channel is a lock, implemented with humans, and it serializes the whole team's testing through one database.
+
+## Why does staging drift away from production?
+
+Staging starts as a copy of production and then diverges every day. Three forces push it away.
+
+- Data age. Most teams refresh staging on a schedule measured in weeks, or only when someone complains. Rows created in production since the last refresh, and the edge cases in them, are missing.
+- Orphaned migrations. Branches that were deployed to staging and then abandoned leave columns, indexes and rows in your migration tool's history table that production never received.
+- Hand edits. Every manual `UPDATE` run to unblock a demo is a change no one recorded.
+
+The result is a database where a migration can pass because staging already has the column it adds, or fail because of a column production never had. Neither outcome tells you much about production. [Production-like data](/concepts/production-like-data) covers which properties a test database has to keep for its results to transfer.
+
+## Why not just give each team its own staging database?
+
+Because each extra copy is a full database to provision, store, refresh and pay for. A full copy needs its own instance and its own refresh job, and a `pg_dump` and `pg_restore` cycle has to rewrite every table and rebuild every index, so it slows down as the database grows. Teams that try this usually stop at two or three environments, call them `staging-1` to `staging-3`, and end up reserving them in chat. The queue gets shorter. It does not go away.
+
+The limit is the cost of a copy. As long as each copy means duplicating every byte, the number of copies a team can afford stays small, and sharing stays the default.
+
+## What do teams use instead of one shared staging database?
+
+| Approach | Isolation | Realism | Where it breaks |
+|---|---|---|---|
+| One shared staging database | None | Medium, decays between refreshes | Collisions, drift, a human queue |
+| Docker Postgres per developer, seeded by script | Full | Low, only what the seed script creates | Seed scripts lag the schema, no production volume or distribution |
+| `CREATE DATABASE ... TEMPLATE` on one server | Full per database | Whatever the template holds | The copy is physical, so it takes time and disk in proportion to size, and the template must have no other connections while it is copied |
+| Schema per developer in one database | Partial, roles and extensions are shared | Low to medium | Cross-schema leaks, shared resource limits, awkward migrations |
+| Restoring a cloud snapshot per environment, such as RDS or Aurora | Full | High at restore time | Every restore is a new instance with its own cost and provisioning wait |
+| Copy-on-write branches from a production-like source | Full | High, refreshed from the source | Needs a platform that supports branching, or storage that supports block-level clones |
+
+The first four rows trade realism for isolation or the other way round. Only the last two give both, and only the last one makes a copy cheap enough to create per change instead of per team. [Copy-on-write](/concepts/copy-on-write) explains why a branch can start with all of the source's data without copying it.
+
+## How do you know staging has become your bottleneck?
+
+You probably already know. The usual signals:
+
+- A chat channel or calendar exists to reserve staging.
+- Test failures get triaged with "is staging broken again?" before anyone reads the stack trace.
+- Someone owns a runbook for resetting staging, and it starts with `pg_dump`.
+- Migrations are tested on staging only after merge, because testing them before merge breaks other branches.
+- Preview deployments exist but all point at the same database, so they collide in exactly the way staging does.
+
+That last one is the fastest-growing version of the problem. [Databases for preview environments](/problems/preview-environments) covers it on its own.
+
+## What changes when every pull request gets its own database?
+
+The unit of isolation moves from the team to the change. A pull request gets a database that starts as a production-like copy, receives only that branch's migrations, and is deleted when the pull request closes. Nobody else's test can touch it, and its schema history matches exactly one branch of the code.
+
+Two things follow. Migrations get tested before merge against realistic data, which is the subject of [testing schema migrations before they reach production](/problems/migration-risk). And staging shrinks to what it is good at: a last integration check of `main`, or nothing at all.
+
+Teams that make this switch use the copies heavily, because a copy is no longer something to ration. On Xata, which publishes this site, the pattern shows up in usage data. An active team creates several Postgres branches on every day it works.
+
+The open question for most teams is the source data. A per-PR copy of production is only acceptable if production's personal data does not come along with it, which is why [production-like test data without exposing PII](/problems/test-data) is usually the next problem to solve.

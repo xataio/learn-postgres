@@ -1,0 +1,70 @@
+---
+title: "Production-like test data without exposing PII"
+description: "How to get realistic test data for development, CI and agents without copying personal data: seeds, synthetic data, subsets and masked production copies."
+order: 5
+related: ["concepts/production-like-data", "problems/coding-agents", "concepts/copy-on-write", "problems/shared-staging"]
+lessons:
+  - slug: "constraints"
+    anchor: "see which constraints masked data still has to satisfy"
+  - slug: "roles-and-privileges"
+    anchor: "control which roles can read which rows"
+---
+
+The safest way to get production-like test data is to mask production once, in a single upstream copy, and make every development, CI, preview and agent database from that copy. Masking has to replace personal data while keeping what makes the data useful for testing: row counts, distributions, foreign keys and the odd values that break code. Seed scripts and synthetic data avoid PII entirely but lose most of that realism.
+
+## Why not just use seed scripts or synthetic data?
+
+Because the bugs that reach production live in the data a seed script does not contain. Seed data is written by someone who knows the rules, so it has no duplicate emails, no null in the column everyone assumes is set, no customer with 40,000 orders, and no row from before the 2021 schema change. Tests pass against it for the same reason.
+
+Synthetic generators do better on volume. They can produce millions of rows that respect your types and foreign keys. They still produce the distribution you described, not the one you have. If 2% of your customers create 60% of the orders, a generator only reproduces that if someone measured it and configured it. [Production-like data](/concepts/production-like-data) lists the properties a test database has to keep, and most of them are things nobody writes down.
+
+Use seeds for unit tests and empty-state UI. They are fast, private and deterministic. Do not use them to judge migrations, query plans or how a page behaves for your largest customer.
+
+## What are the ways to get realistic test data?
+
+| Approach | Realism | PII exposure | Upkeep |
+|---|---|---|---|
+| Seed scripts and fixtures | Low | None | Every schema change |
+| Synthetic generation | Medium on volume, low on distribution | None | Generator rules per table |
+| Subset of production, masked | Medium, depends on the subset rules | Low if masked | Subset rules break as relations change |
+| Full production copy, masked | High | Low if masking is complete | Masking rules for every new column |
+| Dynamic masking on production by role | High | Raw data still in the database | Role management, query overhead |
+| Unmasked production copy | Highest | Full | None, until the incident |
+
+The unmasked copy is on the list because many teams run one, usually a staging database restored from a production dump. It is the realism benchmark and the reason this page exists.
+
+## What does masking have to preserve?
+
+Masking that replaces every email with `user@example.com` is easy and breaks your tests. Good masking keeps these properties:
+
+- Consistency across tables. If `orders.customer_email` and `customers.email` hold the same value in production, they must hold the same masked value. Use deterministic transforms, where the same input always produces the same output, and joins keep working.
+- Constraints. A masked `email` column with a `UNIQUE` index must still be unique. A masked phone number must still pass the `CHECK` that validates its format.
+- Shape. Name lengths, null rates, value distributions and skew should survive, or query plans and UI layouts will differ from production.
+- Keys. Primary and foreign keys usually stay as they are. Replace them only if the IDs themselves are sensitive.
+
+Masking also has to find the PII first, and that is where it usually fails. Obvious columns such as `email`, `name` and `phone` get rules. Personal data in `notes`, `metadata jsonb`, support ticket bodies and audit log payloads does not, because nobody thinks of those as personal data until someone greps them.
+
+## Which masking mistakes leak data anyway?
+
+- Unsalted hashes. `md5(email)` looks anonymous and is reversible for any email someone can guess. Use a keyed transform or a generated replacement.
+- New columns. A migration adds `customers.tax_id` next month. If masking copies unknown columns through by default, it leaks the first time it runs. Fail closed. A column with no masking rule should stop the copy, not pass through.
+- Combinations. A masked name next to an exact birth date, postcode and gender can still identify a person. Generalize quasi-identifiers like these, or drop them.
+- Logs and dumps. The raw dump used as the masking input is itself a copy of production. Keep it where production lives, and delete it after.
+
+Ask your privacy or security team whether masked data still counts as personal data under the rules you operate under. The answer decides who may access the copies.
+
+## Where should masking happen?
+
+Once, upstream. Keep a single masked copy of production, refreshed on a schedule, inside the same security boundary as production. Every other database is made from that copy: developer databases, CI, preview environments and agent sandboxes. Raw data never leaves the boundary, and the masking rules live in one place.
+
+Masking per copy is the alternative, and it scales badly. Each copy repeats the full masking pass over the full data, and each one is another chance for the rules to be out of date. It also forces teams to keep few copies, which pushes them back into [shared staging databases](/problems/shared-staging) and their collisions.
+
+The upstream model only works if making a copy of the masked source is cheap. With [copy-on-write](/concepts/copy-on-write), a new database shares the masked source's blocks and stores only its own changes, so per-PR and per-agent copies of production-scale data become practical.
+
+## Why does this matter more for coding agents?
+
+Because an agent reads the data it queries, and that data goes to a model provider. A developer looking at a masked row and an agent reading 500 of them into its context are different exposures. If agents get databases, they should only ever get copies of the masked source. [Giving coding agents a database without risking production](/problems/coding-agents) covers the rest of that setup.
+
+## Which tools do teams use for masking Postgres?
+
+Two common open-source options are PostgreSQL Anonymizer, an extension that applies masking rules declared on columns, and Greenmask, which applies transformations while it dumps a database. Teams also write their own transforms in SQL or in their ETL tool. Pick by where you want masking to run: inside a Postgres you control, or in the pipeline that moves data out of production. Either way, test the masked output for leaks by searching it for a few real customer values you know are in production.

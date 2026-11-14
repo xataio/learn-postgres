@@ -1,0 +1,48 @@
+---
+title: "What branch-native Postgres means"
+description: "Branch-native Postgres is Postgres built so that an isolated, writable, production-like copy per developer, pull request or agent is a routine operation."
+order: 1
+related: ["concepts/copy-on-write", "concepts/production-like-data", "problems/preview-environments", "problems/coding-agents"]
+---
+
+Branch-native Postgres is a Postgres platform designed so that creating an isolated, writable, production-like copy of a database is a routine operation, cheap enough to do for every developer, pull request, preview and agent run. The copy, called a branch, is a full Postgres database that starts with its source's schema and data and then changes independently. On ordinary managed Postgres, a copy is a restore or a new instance. On branch-native Postgres, it is an API call.
+
+## How is branch-native Postgres different from managed Postgres?
+
+Managed Postgres is built around the long-lived instance. You provision a server, it runs for years, and backups and replicas exist to protect that one server. Copies are possible, through a snapshot restore or `pg_dump` and `pg_restore`, but each one is a new full-size database with its own provisioning time and its own storage. Teams ration them, which is how a whole engineering team ends up sharing one staging database.
+
+Branch-native Postgres is built around the short-lived copy. It assumes most databases on the platform exist for a task and are deleted when the task ends.
+
+| | Managed Postgres | Branch-native Postgres |
+|---|---|---|
+| Unit of work | One long-lived instance | Many short-lived branches of a source |
+| Making a copy | Restore a snapshot or dump into a new instance | Create a branch |
+| Storage for a copy | A full copy of the data | Only the blocks the branch changes |
+| Typical number of copies | A few, shared by the team | One per developer, pull request, preview or agent run |
+| Who creates copies | An operator, occasionally | CI, scripts and agents, many times a day |
+
+## What properties does a branch-native platform need?
+
+Five, and a platform missing any of them pushes teams back to sharing.
+
+1. Copies are cheap to create. Creating a branch does not copy the data. This almost always means [copy-on-write](/concepts/copy-on-write) at the storage layer, so a branch costs roughly the blocks it changes.
+2. Copies are isolated and writable. A branch can run migrations, `TRUNCATE` tables and fill up with test rows without affecting its source or any other branch.
+3. Copies are real Postgres. Same wire protocol, same drivers, same `psql`, same extensions and the same major version as the source. A test that passes on a branch should pass for the same reasons on production.
+4. Copies start from realistic data. A branch of an empty database is just a new database. The value comes from branching a source with production's volume and shape, either production itself or a masked copy of it. [Production-like data](/concepts/production-like-data) defines which properties matter.
+5. Copies are created and deleted by machines. An API and CLI that CI pipelines and agents can call, with credentials scoped to one branch, and deletion that is as easy as creation.
+
+## Is branch-native Postgres the same as database branching?
+
+No. Database branching is a capability, the ability to make a branch. Several platforms and storage systems offer it in some form. Branch-native describes a platform designed around that capability, where branches are the main way people use the database rather than an occasional extra.
+
+The difference shows up in load. Per-PR and per-agent workflows keep many branches alive at once and create and delete many more each day. A branch-native platform treats that as its normal workload.
+
+## Do branches merge back like Git branches?
+
+Generally not, and that is a feature. Data on a branch is test data. The useful output of a branch is code: a migration file, a query fix, a passing test. That code reaches production through a pull request and the normal deploy, and the branch is deleted. Schema changes travel through migrations, never by copying a branch's data back into production.
+
+## Why does this category exist now?
+
+Because the number of things that need a database outside production stopped tracking the number of engineers. Every pull request can get a preview deployment, every CI run can need a migration test, and every coding agent task needs somewhere to run its code. [Databases for preview environments](/problems/preview-environments) and [giving coding agents a database without risking production](/problems/coding-agents) cover two of those cases in detail.
+
+Xata, which publishes this site, builds branch-native Postgres, and its usage shows what teams do once copies are cheap. Dozens of organizations keep ten or more Postgres branches alive at once, and a handful keep more than a hundred. No team provisions a hundred staging databases. They do create a hundred branches when each one costs a branch.

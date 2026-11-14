@@ -1,0 +1,63 @@
+---
+title: "Copy-on-write for databases"
+description: "Copy-on-write lets a database copy share its source's storage blocks and store only what changes. How it works under Postgres, where it exists and its limits."
+order: 2
+related: ["concepts/branch-native-postgres", "problems/migration-risk", "problems/preview-environments", "concepts/production-like-data"]
+lessons:
+  - slug: "mvcc-and-isolation"
+    anchor: "watch an UPDATE write a new row version instead of overwriting the old one"
+  - slug: "vacuum-and-bloat"
+    anchor: "see how dead row versions take up space until VACUUM clears them"
+---
+
+Copy-on-write is a storage technique in which a copy shares all of its source's data blocks and writes a new block only when one side changes it. For databases, it means a full, writable copy of a large Postgres database can exist without duplicating its data first. Creating the copy costs metadata, and storage grows only with the blocks the copy changes.
+
+## How does copy-on-write work under Postgres?
+
+Postgres stores each table and index as files of 8 KB pages. It does not know or care how the storage under those files is organized. Copy-on-write happens one layer down, in the file system or the block volume.
+
+When you make a copy-on-write clone of the volume holding a Postgres data directory, the clone points at the same blocks as the source. A new Postgres server starts on the clone. Because a clone of a running database is captured mid-write, Postgres treats it as it would after a crash. It replays the write-ahead log from the last checkpoint and comes up consistent. This only works when the snapshot captures the data files and the WAL at the same instant, which is why the technique depends on atomic snapshots.
+
+From then on, the two sides diverge. When the copy updates a row, the page holding it gets written to a new block that only the copy sees. The source keeps the original. Pages nobody touches stay shared forever.
+
+```text
+source:  [A][B][C][D][E]
+copy:    [A][B][C'][D][E]   only C' is new storage
+```
+
+## Where does copy-on-write exist today?
+
+| Layer | Examples | What you get |
+|---|---|---|
+| File system snapshots and clones | ZFS, Btrfs, XFS reflinks, APFS | Clone a data directory, then start a second Postgres on it |
+| Logical volumes | LVM thin snapshots | The same, at the block-device level |
+| Postgres itself | `file_copy_method = clone` in Postgres 18 | `CREATE DATABASE ... STRATEGY = FILE_COPY` asks the kernel to share blocks where the file system supports it |
+| Branching platforms | Managed Postgres services built around branches | A branch through an API call |
+
+The Postgres 18 option is the easiest to try on your own machine:
+
+```sql
+-- postgresql.conf: file_copy_method = clone
+CREATE DATABASE app_copy TEMPLATE app STRATEGY = FILE_COPY;
+```
+
+It has the limits of any template copy: no other session may be connected to `app` while it is copied, and the copy lives on the same server, sharing its CPU, memory and connection limit.
+
+## How is copy-on-write different from a dump and restore?
+
+A dump and restore copies meaning, not blocks. `pg_dump` reads every row and writes it out as SQL or an archive, and `pg_restore` inserts every row again and rebuilds every index and constraint. The work is proportional to the size of the database. Copy-on-write work is proportional to what changes after the copy.
+
+That difference decides how many copies a team can have. With dump and restore, copies are expensive, so teams share them. With copy-on-write, a copy per pull request or per migration test becomes practical, which is what [testing schema migrations before they reach production](/problems/migration-risk) and [databases for preview environments](/problems/preview-environments) depend on. On Xata, which publishes this site, a copy-on-write child branch takes about three seconds.
+
+## Is Postgres MVCC a form of copy-on-write?
+
+At the row level, partly. An `UPDATE` in Postgres does not overwrite a row. It writes a new row version and marks the old one dead, and `VACUUM` reclaims the old one later. That gives concurrent transactions consistent snapshots inside one database. It does not give you a separate database. Every transaction still shares one schema, one set of tables and one server. Storage copy-on-write works below Postgres and produces databases that are fully independent.
+
+## What are the limits of copy-on-write?
+
+- Divergence costs storage. A branch that rewrites most of its pages ends up storing most of a full copy. `VACUUM FULL`, `CLUSTER`, `REINDEX` and column type changes that rewrite a table all do this.
+- The copy is frozen at its creation point. It does not follow the source. To get fresher data, make a new copy rather than syncing an old one.
+- Shared storage, shared performance. Clones on one volume or pool share its I/O. A heavy load test on one copy can slow its neighbors.
+- The data is whatever the source held. If the source contains personal data, so does every copy. Copy-on-write makes [production-like data](/concepts/production-like-data) cheap to copy. It does not make it safe to copy.
+
+The storage technique is necessary but not sufficient for a team workflow. [Branch-native Postgres](/concepts/branch-native-postgres) describes the rest: real Postgres on every copy, realistic sources, and an API that CI and agents can call.
